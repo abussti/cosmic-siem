@@ -1,0 +1,27 @@
+# Environment
+.env
+*.env
+.env.*
+
+# Logs — never commit runtime logs
+logs/
+*.log
+*.jsonl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Docker
+.docker/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
