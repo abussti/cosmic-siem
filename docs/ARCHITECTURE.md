@@ -4,7 +4,7 @@
 **Organisation:** Cosmic Info Solutions  
 **Date:** May 2026  
 **Phase:** 1 — Foundation & Setup  
-**Stack:** Wazuh 4.x · Elastic 8.x · LangGraph (latest) · Python 3.11+
+**Stack:** Wazuh 4.7.5 · Elastic 8.x · LangGraph (latest) · Python 3.11+
 
 ---
 

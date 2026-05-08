@@ -8,7 +8,7 @@
 
 An open-source SIEM platform with an agentic AI layer built on top. It ingests security logs from endpoints, network, cloud, and identity sources — then uses autonomous AI agents (built with LangGraph) to triage alerts, hunt for threats proactively, and execute response actions without constant human involvement.
 
-**Stack:** Wazuh 4.x · Elastic 8.x · LangGraph · Python 3.11+ · Docker
+**Stack:** Wazuh 4.7.5 · Elastic 8.x · LangGraph · Python 3.11+ · Docker
 
 ---
 
