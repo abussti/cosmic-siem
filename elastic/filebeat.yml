@@ -1,0 +1,21 @@
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/ossec/logs/alerts/alerts.json
+    json.keys_under_root: true          # flatten JSON fields to top level
+    json.add_error_key: true
+    json.message_key: full_log
+
+setup.ilm.enabled: false               # disable ILM for simplicity in dev
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "wazuh-alerts-%{+yyyy.MM.dd}"
+
+setup.template:
+  name: "wazuh"
+  pattern: "wazuh-alerts-*"
+  enabled: true
+
+logging.level: info

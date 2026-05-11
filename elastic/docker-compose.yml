@@ -1,0 +1,49 @@
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false        # dev only — enable in prod
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g         # 1GB heap — raise to 2g if you have RAM
+    ports:
+      - "9201:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    networks:
+      - elastic-net
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - elastic-net
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.12.0
+    container_name: filebeat
+    user: root                               # needs root to read Wazuh alert files
+    volumes:
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - single-node_wazuh_logs:/var/ossec/logs:ro
+    depends_on:
+      - elasticsearch
+    networks:
+      - elastic-net
+
+volumes:
+  esdata:
+  single-node_wazuh_logs:
+    external: true
+
+networks:
+  elastic-net:
+    driver: bridge
