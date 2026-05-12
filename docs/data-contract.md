@@ -1,17 +1,26 @@
-# Data Contract — cosmic-siem
+# Wazuh → Elasticsearch Data Contract
 
-All log events flowing through the pipeline must contain the following fields after Wazuh normalisation. This contract is confirmed in Week 2 (Day 7).
-
-## Status: PENDING CONFIRMATION (Week 2, Day 7)
+**Verified:** 2026-05-12
+**Index pattern:** wazuh-alerts-*
+**Pipeline:** Wazuh Manager → alerts.json → Filebeat → Elasticsearch → Kibana
 
 ## Required Fields
 
-| Field | Type | Status |
-|-------|------|--------|
-| `@timestamp` | ISO 8601 datetime | ⬜ To confirm |
-| `agent.ip` | string (IP) | ⬜ To confirm |
-| `agent.name` | string | ⬜ To confirm |
-| `rule.description` | string | ⬜ To confirm |
-| `rule.level` | integer (1–15) | ⬜ To confirm |
+| Field             | Type    | Notes                                        |
+|-------------------|---------|----------------------------------------------|
+| @timestamp        | date    | Set by Filebeat from Wazuh alert timestamp   |
+| agent.ip          | ip      | Defaults to 0.0.0.0 for manager-local events |
+| agent.name        | keyword | Hostname of the reporting agent              |
+| rule.description  | text    | Human-readable rule match description        |
+| rule.level        | integer | Wazuh severity level (0-15)                  |
 
-*Update this file on Day 7 when confirmed in Elastic.*
+## Validation Result
+
+- Documents verified: 213+
+- Missing fields after fix: 0
+- Fix applied: Filebeat JavaScript processor adds agent.ip = 0.0.0.0 when missing
+- Index template applied: wazuh-alerts-template (priority 200)
+
+## Known Edge Cases
+
+- Manager-local events (agent.id = 000) have agent.ip = 0.0.0.0 (expected)
