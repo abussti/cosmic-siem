@@ -14,6 +14,13 @@
 | rule.description  | text    | Human-readable rule match description        |
 | rule.level        | integer | Wazuh severity level (0-15)                  |
 
+## Cloud and Network Source Types
+
+| Source Type | Log Format | Location | Wazuh Format | Added |
+|-------------|-----------|----------|--------------|-------|
+| Network – firewall (simulated iptables) | syslog | /var/log/firewall.log | syslog | Day 8 |
+| Cloud – AWS CloudTrail (simulated) | NDJSON | /var/log/cloudtrail.json | json | Day 8 |
+
 ## Validation Result
 
 - Documents verified: 213+
