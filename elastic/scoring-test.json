@@ -1,0 +1,1146 @@
+[
+  {
+    "_id": "o1bgOZ4BpEtVXRVArDfW",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:57:56.160Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "f1bfOZ4BpEtVXRVArjfI",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:56:51.122Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "clbeOZ4BpEtVXRVAxDdX",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:55:51.098Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "9lbWOZ4BpEtVXRVAEDby",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:46:20.888Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "9VbWOZ4BpEtVXRVAEDby",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:46:20.887Z",
+    "rule": {
+      "level": 3,
+      "description": "sshd: authentication success.",
+      "id": "5715"
+    },
+    "agent": {
+      "version": "8.12.0",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "TVbJOZ4BpEtVXRVAXzaF",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:32:29.040Z",
+    "rule": {
+      "level": 3,
+      "description": "sshd: authentication success.",
+      "id": "5715"
+    },
+    "agent": {
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "TFbJOZ4BpEtVXRVAXzaF",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:32:29.038Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "-FbEOZ4BpEtVXRVAyzU3",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:27:28.932Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "-lbEOZ4BpEtVXRVAyzU3",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:27:28.932Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "000",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "81bEOZ4BpEtVXRVAaTVj",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:27:03.886Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "9FbEOZ4BpEtVXRVAaTVj",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:27:03.886Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "wFbEOZ4BpEtVXRVAAzXG",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:26:38.876Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "vVbEOZ4BpEtVXRVAAzXG",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:26:38.875Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "uVbEOZ4BpEtVXRVAAzXG",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:26:37.873Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "ulbEOZ4BpEtVXRVAAzXG",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:26:37.873Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "tVbEOZ4BpEtVXRVAAzXG",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:26:37.872Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "iVa_OZ4BpEtVXRVAvTUz",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:21:57.656Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "000",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ip": "0.0.0.0",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "ila_OZ4BpEtVXRVAvTUz",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:21:57.656Z",
+    "rule": {
+      "level": 3,
+      "description": "sshd: authentication success.",
+      "id": "5715"
+    },
+    "agent": {
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "aVa-OZ4BpEtVXRVAyjXF",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:21:02.638Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "WVa9OZ4BpEtVXRVA8zXD",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:20:00.557Z",
+    "rule": {
+      "level": 12,
+      "description": "Multiple authentication failures followed by a success.",
+      "id": "40112"
+    },
+    "agent": {
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 71,
+    "_scoring_detail": {
+      "rule_severity_normalised": 78.57,
+      "anomaly_score_used": 75.0,
+      "time_factor": 50.0,
+      "raw_score": 71.43
+    }
+  },
+  {
+    "_id": "Wla9OZ4BpEtVXRVA8zXD",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:20:00.557Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "type": "filebeat",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "IFa7OZ4BpEtVXRVAMDVL",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:16:59.444Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000"
+    },
+    "source": {},
+    "confidence": 58,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 50.0,
+      "raw_score": 57.72
+    }
+  },
+  {
+    "_id": "f1axOZ4BpEtVXRVARzTy",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:06:09.028Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "gVaxOZ4BpEtVXRVARzTy",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.18-2026.05.18-000001",
+    "@timestamp": "2026-05-18T06:06:09.028Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "ebb0683f-13df-4637-b00a-8bed2cb03779",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 20,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 50.0,
+      "raw_score": 19.72
+    }
+  },
+  {
+    "_id": "M3UgN54B1jHwdj8WcwNs",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:08:44.113Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "name": "wazuh.manager",
+      "id": "000",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "4HUcN54B1jHwdj8W8AJY",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:04:53.951Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "type": "filebeat",
+      "id": "002",
+      "name": "agent1",
+      "ip": "192.168.56.11",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "rnUcN54B1jHwdj8WAQKA",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:03:52.810Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "id": "002",
+      "name": "agent1",
+      "ip": "192.168.56.11",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "oHUbN54B1jHwdj8WxgLV",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:03:37.787Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ip": "192.168.56.11",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "id": "002",
+      "name": "agent1"
+    },
+    "source": {},
+    "confidence": 30,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 100.0,
+      "raw_score": 29.72
+    }
+  },
+  {
+    "_id": "oXUbN54B1jHwdj8WxgLV",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:03:37.787Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "id": "002",
+      "name": "agent1",
+      "ip": "192.168.56.11",
+      "type": "filebeat"
+    },
+    "source": {},
+    "confidence": 30,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 100.0,
+      "raw_score": 29.72
+    }
+  },
+  {
+    "_id": "mHUbN54B1jHwdj8WjAIy",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:03:22.774Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "ip": "192.168.56.11",
+      "id": "002",
+      "name": "agent1"
+    },
+    "source": {},
+    "confidence": 30,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 100.0,
+      "raw_score": 29.72
+    }
+  },
+  {
+    "_id": "mXUbN54B1jHwdj8WjAIy",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:03:22.774Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "id": "002",
+      "name": "agent1",
+      "ip": "192.168.56.11",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c"
+    },
+    "source": {},
+    "confidence": 30,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 100.0,
+      "raw_score": 29.72
+    }
+  },
+  {
+    "_id": "mnUbN54B1jHwdj8WjAIy",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:03:22.774Z",
+    "rule": {
+      "level": 3,
+      "description": "PAM: Login session opened.",
+      "id": "5501"
+    },
+    "agent": {
+      "ip": "192.168.56.11",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "id": "002",
+      "name": "agent1"
+    },
+    "source": {},
+    "confidence": 30,
+    "_scoring_detail": {
+      "rule_severity_normalised": 14.29,
+      "anomaly_score_used": 10.0,
+      "time_factor": 100.0,
+      "raw_score": 29.72
+    }
+  },
+  {
+    "_id": "e3UaN54B1jHwdj8WFQKf",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T18:01:46.889Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "NnUWN54B1jHwdj8WNAIG",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:57:36.533Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "yXX_Np4B1jHwdj8WPgCE",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:32:29.884Z",
+    "rule": {
+      "level": 10,
+      "description": "PAM: Multiple failed logins in a small period of time.",
+      "id": "5551"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "wXX_Np4B1jHwdj8WPgCE",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:32:27.880Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "ip": "0.0.0.0",
+      "id": "000"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "k3X9Np4B1jHwdj8WgAAH",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:30:41.724Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "5HT0Np4B1jHwdj8WVv9J",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:20:39.188Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager",
+      "type": "filebeat",
+      "version": "8.12.0"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "l3TuNp4B1jHwdj8Ww_-2",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:14:31.957Z",
+    "rule": {
+      "level": 10,
+      "description": "PAM: Multiple failed logins in a small period of time.",
+      "id": "5551"
+    },
+    "agent": {
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "bHTuNp4B1jHwdj8WOf-x",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:13:56.517Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "8HTnNp4B1jHwdj8WZv6w",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:06:27.327Z",
+    "rule": {
+      "level": 10,
+      "description": "PAM: Multiple failed logins in a small period of time.",
+      "id": "5551"
+    },
+    "agent": {
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "yHTmNp4B1jHwdj8W5f4D",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:05:52.095Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "ip": "0.0.0.0",
+      "id": "000",
+      "name": "wazuh.manager"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "oHTkNp4B1jHwdj8W7P40",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T17:03:42.875Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "id": "000",
+      "name": "wazuh.manager",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ip": "0.0.0.0"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  },
+  {
+    "_id": "E3TdNp4B1jHwdj8WzP6J",
+    "_index": ".ds-logs-wazuh.alerts-2026.05.17-2026.05.17-000001",
+    "@timestamp": "2026-05-17T16:55:56.019Z",
+    "rule": {
+      "level": 10,
+      "description": "sshd: brute force trying to get access to the system. Non existent user.",
+      "id": "5712"
+    },
+    "agent": {
+      "name": "wazuh.manager",
+      "ephemeral_id": "852a3d7a-ffa7-4dd8-951b-b0f476142b3c",
+      "type": "filebeat",
+      "version": "8.12.0",
+      "ip": "0.0.0.0",
+      "id": "000"
+    },
+    "source": {},
+    "confidence": 68,
+    "_scoring_detail": {
+      "rule_severity_normalised": 64.29,
+      "anomaly_score_used": 55.0,
+      "time_factor": 100.0,
+      "raw_score": 67.72
+    }
+  }
+]
