@@ -1,3 +1,5 @@
-# response_agent.py
-# Cosmic Info Solutions — cosmic-siem
-# Placeholder — implementation starts Week 3
+from state import AgentState
+
+def response_node(state: AgentState) -> AgentState:
+    state["notes"].append("[response] stub — not yet implemented")
+    return state
