@@ -1,0 +1,56 @@
+title: Valid Accounts — PAM Login Outside Business Hours
+id: a1b2c3d4-0002-4e5f-8a9b-c0d1e2f30002
+status: production
+description: >
+  Detects a successful PAM login session opened outside business hours
+  (before 06:00 or after 22:00). After-hours logins from valid accounts
+  may indicate credential compromise or insider threat.
+  Mapped to MITRE ATT&CK T1078 (Valid Accounts).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-15
+modified: 2026-06-03
+
+references:
+  - https://attack.mitre.org/techniques/T1078/
+
+tags:
+  - attack.defense_evasion
+  - attack.persistence
+  - attack.privilege_escalation
+  - attack.initial_access
+  - attack.t1078
+
+logsource:
+  product: wazuh
+  service: pam
+
+detection:
+  selection:
+    rule.id: '5501'
+    rule.groups|contains: authentication_success
+  filter_business_hours:
+    data.login_hour|gte: 6
+    data.login_hour|lt: 22
+  condition: selection and not filter_business_hours
+
+falsepositives:
+  - On-call engineers logging in during an incident
+  - Scheduled maintenance tasks running as named user accounts
+  - Employees working across time zones
+
+level: medium
+
+fields:
+  - data.srcip
+  - data.dstuser
+  - data.login_hour
+  - agent.name
+  - rule.description
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: query
+# Index: logs-wazuh.alerts-*
+# Query: rule.id:5501
+# Post-filter: data.login_hour < 6 OR data.login_hour >= 22
+# MITRE: T1078 — Valid Accounts

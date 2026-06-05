@@ -1,0 +1,48 @@
+title: Process Injection — High Severity Wazuh Alert
+id: a1b2c3d4-0007-4e5f-8a9b-c0d1e2f30007
+status: production
+description: >
+  Detects any Wazuh alert classified in the 'high' severity group, which
+  Wazuh reserves for events that strongly correlate with process injection,
+  memory manipulation, or other high-risk runtime attacks. These alerts
+  bypass normal confidence thresholds and are routed directly to triage.
+  Mapped to MITRE ATT&CK T1055 (Process Injection).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-20
+modified: 2026-05-20
+
+references:
+  - https://attack.mitre.org/techniques/T1055/
+
+tags:
+  - attack.defense_evasion
+  - attack.privilege_escalation
+  - attack.t1055
+
+logsource:
+  product: wazuh
+
+detection:
+  selection:
+    rule.groups|contains: high
+  condition: selection
+
+falsepositives:
+  - Security scanning tools that deliberately trigger high-severity signatures
+  - Vulnerability assessment agents running on endpoints
+
+level: critical
+
+fields:
+  - agent.name
+  - data.srcip
+  - rule.id
+  - rule.description
+  - rule.level
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: query
+# Index: logs-wazuh.alerts-*
+# Query: rule.groups:high
+# MITRE: T1055 — Process Injection

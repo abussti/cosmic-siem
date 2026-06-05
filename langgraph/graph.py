@@ -35,6 +35,7 @@ def build_graph():
     return g.compile()
 
 graph = build_graph()
+pipeline = graph
 
 if __name__ == "__main__":
     print("[graph] Graph compiled successfully.")

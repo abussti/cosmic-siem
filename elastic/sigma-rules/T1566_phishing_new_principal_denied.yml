@@ -1,0 +1,54 @@
+title: Phishing — Access Denied from New AWS Principal
+id: a1b2c3d4-0008-4e5f-8a9b-c0d1e2f30008
+status: production
+description: >
+  Detects a CloudTrail AccessDenied event originating from an AWS principal
+  (agent host) that has not been seen making API calls before. A new principal
+  suddenly generating access denied events is a common pattern after phishing
+  — an attacker uses stolen credentials for the first time and probes for
+  accessible resources, triggering permission errors.
+  Mapped to MITRE ATT&CK T1566 (Phishing).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-20
+modified: 2026-05-20
+
+references:
+  - https://attack.mitre.org/techniques/T1566/
+
+tags:
+  - attack.initial_access
+  - attack.t1566
+
+logsource:
+  product: wazuh
+  service: aws_cloudtrail
+
+detection:
+  selection:
+    rule.id: '100013'
+    rule.groups|contains:
+      - cloudtrail
+      - aws
+  new_terms:
+    - agent.name
+  condition: selection
+
+falsepositives:
+  - New AWS accounts or IAM roles being configured for the first time
+  - New team members accessing cloud resources with their own credentials
+
+level: high
+
+fields:
+  - agent.name
+  - data.srcip
+  - rule.description
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: new_terms
+# New terms field: agent.name
+# History window: 30d
+# Index: logs-wazuh.alerts-*
+# Query: rule.id:100013
+# MITRE: T1566 — Phishing

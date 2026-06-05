@@ -1,48 +1,40 @@
 """
-state.py — Shared AgentState for the SIEM LangGraph pipeline.
+state.py
+========
+AgentState TypedDict — shared across all LangGraph nodes.
 
-Every node in the graph reads from and writes to this TypedDict.
-Fields are intentionally broad at this scaffold stage; add sub-fields
-as each agent is implemented in later days.
+Day 17 additions
+----------------
+  alert_es_id    : str | None  — Elasticsearch document _id of the source alert
+  alert_es_index : str | None  — Elasticsearch index name (e.g. .ds-logs-wazuh.alerts-2026.06.02-000001)
+
+These two fields let elastic_tools.write_triage_result_to_es() write
+triage.verdict and triage.summary back to the *exact* original document
+after the pipeline finishes.
 """
 
 from __future__ import annotations
-from typing import Optional
-from typing_extensions import TypedDict
+from typing import TypedDict
 
 
-class AgentState(TypedDict):
-    """
-    The single state object passed through the entire LangGraph.
+class AgentState(TypedDict, total=False):
+    # ── Core alert payload ───────────────────────────────────────────────────
+    alert: dict                     # Raw Wazuh alert (_source from ES hit)
+    alert_es_id: str | None         # ES document _id  (Day 17)
+    alert_es_index: str | None      # ES index name    (Day 17)
 
-    Fields
-    ------
-    alert : dict
-        Raw alert payload from Elasticsearch / Wazuh.
-        Expected keys: rule_id, rule_description, rule_groups,
-        agent_name, src_ip, timestamp, raw (full JSON).
+    # ── Confidence routing ───────────────────────────────────────────────────
+    confidence: str | None          # "low" / "medium" / "high"  (triage agent)
+    confidence_pct: int             # 0–100  (coordination agent → graph router)
 
-    confidence : Optional[str]
-        Set by the triage agent after analysis.
-        Values: "low" | "medium" | "high"
+    # ── Classification ───────────────────────────────────────────────────────
+    technique: str | None           # MITRE ATT&CK ID, e.g. "T1110"
 
-    technique : Optional[str]
-        MITRE ATT&CK technique ID assigned during triage.
-        Example: "T1110" (Brute Force), "T1078" (Valid Accounts).
+    # ── Pipeline log ────────────────────────────────────────────────────────
+    notes: list[str]                # Append-only trace from every agent
 
-    notes : list[str]
-        Running log of observations and decisions made by each agent.
-        Every agent appends its findings — never overwrites.
+    # ── Routing flags ────────────────────────────────────────────────────────
+    escalate: bool                  # True → human analyst should review
 
-    escalate : bool
-        Flag set to True when the coordination agent decides a human
-        analyst must review this incident.
-    """
-
-    alert: dict
-    confidence: Optional[str]
-    confidence_pct: int
-    technique: Optional[str]
-    notes: list
-    escalate: bool
-    triage_result: Optional[dict]
+    # ── Triage output ────────────────────────────────────────────────────────
+    triage_result: dict | None      # {verdict, summary, evidence}  (triage agent)

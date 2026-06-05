@@ -1,0 +1,311 @@
+{
+  "scenario": "T1110 SSH Brute Force",
+  "detected": 10,
+  "alerts_generated": 10,
+  "triage_ran": 10,
+  "avg_confidence_pct": 91.0,
+  "mitre_correct": true,
+  "triage_quality_score": 5,
+  "per_attempt": [
+    {
+      "attempt": 1,
+      "username": "root",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=root",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(root) \u2192 5 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'root' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.1
+    },
+    {
+      "attempt": 2,
+      "username": "admin",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=admin",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(admin) \u2192 7 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'admin' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 3,
+      "username": "ubuntu",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=ubuntu",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(ubuntu) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'ubuntu' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 4,
+      "username": "test",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=test",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(test) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'test' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 5,
+      "username": "user",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=user",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(user) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'user' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 6,
+      "username": "oracle",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=oracle",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(oracle) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'oracle' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 7,
+      "username": "pi",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=pi",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(pi) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'pi' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 8,
+      "username": "git",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=git",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(git) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'git' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 9,
+      "username": "deploy",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=deploy",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(deploy) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'deploy' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "attempt": 10,
+      "username": "backup",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent usernames within a 60-second window. Consistent with automated SSH brute-force (MITRE ATT&CK T1110). Source IP has no prior login history. Immediate IP block recommended.",
+      "evidence": [
+        "10 failed SSH attempts in under 60 seconds from single source IP",
+        "Targeted usernames include common defaults: root, admin, ubuntu",
+        "Source IP 203.0.113.77 not seen in 7-day login history",
+        "Rule 5710 fired consistently \u2014 sshd non-existent user pattern"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5710 | level 10 | src=203.0.113.77 | user=backup",
+        "[triage] get_recent_events(203.0.113.77) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(backup) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | Multiple failed SSH login attempts from 203.0.113.77 targeting non-existent user...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'backup' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 203.0.113.77 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    }
+  ]
+}

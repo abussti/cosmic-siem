@@ -1,0 +1,20 @@
+{
+  "scenario": "T1078 After-Hours Login",
+  "confidence_pct": 53,
+  "tier": "ANALYST_REVIEW",
+  "verdict": "\u2014",
+  "technique": "\u2014",
+  "escalate": false,
+  "summary": "\u2014",
+  "evidence": [],
+  "mitre_correct": false,
+  "triage_quality_score": 5,
+  "injected_es_id": "bqVfkp4BGQFLrehW_dwH",
+  "injected_es_index": ".ds-logs-wazuh.alerts-scenario3-2026.06.03-000001",
+  "alert_timestamp": "2026-06-04T02:17:00.000Z",
+  "source_ip": "185.220.101.250",
+  "username": "devadmin",
+  "es_writeback": {},
+  "elapsed_s": 0.0,
+  "notes": []
+}

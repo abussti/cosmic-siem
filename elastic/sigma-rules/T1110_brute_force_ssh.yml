@@ -1,0 +1,51 @@
+title: Brute Force — SSH Authentication Failure Spike
+id: a1b2c3d4-0001-4e5f-8a9b-c0d1e2f30001
+status: production
+description: >
+  Detects multiple failed SSH login attempts from the same source IP within
+  a short window, indicating a brute force or credential stuffing attack.
+  Mapped to MITRE ATT&CK T1110 (Brute Force).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-15
+modified: 2026-05-15
+
+references:
+  - https://attack.mitre.org/techniques/T1110/
+
+tags:
+  - attack.credential_access
+  - attack.t1110
+
+logsource:
+  product: wazuh
+  service: sshd
+
+detection:
+  selection:
+    rule.groups|contains:
+      - authentication_failed
+      - sshd
+  condition: selection | count() by data.srcip > 5
+
+falsepositives:
+  - Automated deployment scripts with misconfigured SSH credentials
+  - Legitimate users repeatedly mistyping passwords
+
+level: high
+
+fields:
+  - data.srcip
+  - data.dstuser
+  - agent.name
+  - rule.description
+  - rule.level
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: threshold
+# Threshold field: data.srcip
+# Threshold count: 5
+# Threshold window: 60s
+# Index: logs-wazuh.alerts-*
+# Query: rule.groups:authentication_failed AND rule.groups:sshd
+# MITRE: T1110 — Brute Force

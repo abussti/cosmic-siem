@@ -1,0 +1,51 @@
+title: Data Encrypted for Impact — SCA Compliance Failure Spike
+id: a1b2c3d4-0009-4e5f-8a9b-c0d1e2f30009
+status: production
+description: >
+  Detects a sudden spike in Wazuh SCA (Security Configuration Assessment)
+  failure events. A burst of 10 or more SCA failures in 60 seconds may
+  indicate that an attacker or ransomware process is rapidly modifying
+  filesystem or system configuration — altering file permissions, disabling
+  security controls, or encrypting data — causing previously compliant checks
+  to fail in bulk.
+  Mapped to MITRE ATT&CK T1486 (Data Encrypted for Impact).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-20
+modified: 2026-05-20
+
+references:
+  - https://attack.mitre.org/techniques/T1486/
+
+tags:
+  - attack.impact
+  - attack.t1486
+
+logsource:
+  product: wazuh
+  service: sca
+
+detection:
+  selection:
+    rule.groups|contains: sca
+  condition: selection | count() by agent.name >= 10
+
+falsepositives:
+  - Large system updates or OS upgrades temporarily breaking compliance checks
+  - SCA policy updates that flag existing configurations as non-compliant
+
+level: high
+
+fields:
+  - agent.name
+  - rule.description
+  - rule.level
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: threshold
+# Threshold field: agent.name
+# Threshold count: 10
+# Threshold window: 60s
+# Index: logs-wazuh.alerts-*
+# Query: rule.groups:sca
+# MITRE: T1486 — Data Encrypted for Impact

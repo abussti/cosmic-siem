@@ -69,26 +69,10 @@ def coordination_node(state: AgentState) -> AgentState:
     confidence_pct = _rule_level_to_confidence(alert)
     rule_id = alert.get("rule", {}).get("id", "unknown")
 
+    confidence_pct = state.get("confidence_pct") or \
+                     min(100, int((rule.get("level", 0) / 15) * 100))
+
     state["confidence_pct"] = confidence_pct
-    state["notes"] = state.get("notes", [])
-
-    if confidence_pct <= ARCHIVE_MAX:
-        _archive_alert(alert, confidence_pct)
-        state["notes"].append(
-            f"[coordination] confidence={confidence_pct} → ARCHIVED (rule {rule_id})"
-        )
-
-    elif confidence_pct <= REVIEW_MAX:
-        _send_to_review_queue(alert, confidence_pct)
-        state["notes"].append(
-            f"[coordination] confidence={confidence_pct} → ANALYST REVIEW QUEUE (rule {rule_id})"
-        )
-
-    else:
-        print(f"[COORDINATION] TRIAGE (confidence={confidence_pct}): rule {rule_id}")
-        state["notes"].append(
-            f"[coordination] confidence={confidence_pct} → TRIAGE AGENT (rule {rule_id})"
-        )
 
     return state
 

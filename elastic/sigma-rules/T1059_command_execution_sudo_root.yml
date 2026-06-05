@@ -1,0 +1,49 @@
+title: Command Execution — Sudo Escalation to ROOT
+id: a1b2c3d4-0003-4e5f-8a9b-c0d1e2f30003
+status: production
+description: >
+  Detects successful sudo execution to the root account (Wazuh rules 5402
+  and 5403). Escalation to root via sudo is a key step in many post-exploitation
+  chains and may indicate an attacker pivoting after initial access.
+  Mapped to MITRE ATT&CK T1059 (Command and Scripting Interpreter).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-15
+modified: 2026-05-15
+
+references:
+  - https://attack.mitre.org/techniques/T1059/
+
+tags:
+  - attack.execution
+  - attack.t1059
+
+logsource:
+  product: wazuh
+  service: sudo
+
+detection:
+  selection:
+    rule.id|contains:
+      - '5402'
+      - '5403'
+  condition: selection
+
+falsepositives:
+  - System administrators performing legitimate root-level maintenance
+  - Automated scripts requiring temporary root privileges
+
+level: medium
+
+fields:
+  - data.srcip
+  - data.dstuser
+  - agent.name
+  - rule.id
+  - rule.description
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: query
+# Index: logs-wazuh.alerts-*
+# Query: rule.id:5402 OR rule.id:5403
+# MITRE: T1059 — Command and Scripting Interpreter

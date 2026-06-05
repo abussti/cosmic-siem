@@ -1,0 +1,6 @@
+server.host: "0.0.0.0"
+elasticsearch.hosts: ["http://elasticsearch:9202"]
+xpack.encryptedSavedObjects.encryptionKey: "Replace with your own key"
+xpack.security.encryptionKey: "Replace with your own key"
+xpack.reporting.encryptionKey: "Replace with your own key"
+elasticsearch.serviceAccountToken: "Replace with your own key"

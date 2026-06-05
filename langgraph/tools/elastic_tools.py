@@ -214,6 +214,135 @@ def get_user_login_history(username: str, days: int = 7, size: int = 50) -> list
     }
     raw = _post(f"{INDEX}/_search", body)
     return [hit["_source"] for hit in raw.get("hits", {}).get("hits", [])]
+# ---------------------------------------------------------------------------
+# NEW FUNCTION 1 — write triage result back to the original alert document
+# ---------------------------------------------------------------------------
+ 
+def write_triage_result_to_es(
+    es_index: str,
+    es_id: str,
+    verdict: str,
+    summary: str,
+    evidence: list[str] | None = None,
+    confidence_pct: int | None = None,
+    technique: str | None = None,
+) -> bool:
+    """
+    Write triage results back to the original Wazuh alert document in ES
+    using the Update API (_update endpoint).
+ 
+    Adds the following fields to the document:
+        triage.verdict          str   e.g. "suspicious" / "benign" / "unknown"
+        triage.summary          str   LLM-generated summary
+        triage.evidence         list  evidence bullets from LLM
+        triage.confidence_pct   int   numeric confidence score
+        triage.technique        str   MITRE ATT&CK ID (if known)
+        triage.processed_at     str   ISO-8601 timestamp of when triage ran
+        triage.pipeline_version str   always "day17-v1"
+ 
+    Parameters
+    ----------
+    es_index : str
+        The full index name of the alert document (e.g. .ds-logs-wazuh.alerts-2026.06.02-000001).
+        Use the _index field from the ES search hit.
+    es_id : str
+        The document _id. Use the _id field from the ES search hit.
+    verdict : str
+        One of: "suspicious", "benign", "unknown".
+    summary : str
+        Human-readable triage summary from the LLM.
+    evidence : list[str], optional
+        List of evidence bullet strings.
+    confidence_pct : int, optional
+        Numeric confidence score (0–100).
+    technique : str, optional
+        MITRE ATT&CK technique ID.
+ 
+    Returns
+    -------
+    bool
+        True if the update succeeded (HTTP 200), False otherwise.
+    """
+    from datetime import datetime, timezone
+ 
+    url = f"{ES_URL}/{es_index}/_update/{es_id}"
+    payload = {
+        "doc": {
+            "triage": {
+                "verdict": verdict,
+                "summary": summary,
+                "evidence": evidence or [],
+                "confidence_pct": confidence_pct,
+                "technique": technique,
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+                "pipeline_version": "day17-v1",
+            }
+        }
+    }
+    try:
+        resp = requests.post(url, json=payload, auth=ES_AUTH, timeout=15)
+        if resp.status_code == 200:
+            result = resp.json().get("result", "")
+            print(f"[ES WRITE-BACK] ✅ doc {es_id[:12]}… → triage.verdict={verdict!r}  (result={result})")
+            return True
+        else:
+            print(f"[ES WRITE-BACK] ❌ HTTP {resp.status_code}: {resp.text[:200]}")
+            return False
+    except Exception as exc:
+        print(f"[ES WRITE-BACK] ❌ Exception: {exc}")
+        return False
+ 
+ 
+# ---------------------------------------------------------------------------
+# NEW FUNCTION 2 — poll for unprocessed alerts (used by pipeline_runner.py)
+# ---------------------------------------------------------------------------
+ 
+def get_unprocessed_alerts(since_timestamp: str, size: int = 50) -> list[dict]:
+    """
+    Return up to `size` Wazuh alerts that:
+      1. Were indexed after `since_timestamp` (ISO-8601 string)
+      2. Do NOT yet have a `triage.verdict` field (i.e. not yet processed)
+ 
+    Parameters
+    ----------
+    since_timestamp : str
+        ISO-8601 datetime string, e.g. "2026-06-02T10:00:00.000Z".
+        Only alerts with @timestamp > this value are returned.
+    size : int
+        Maximum number of alerts to return per poll cycle. Default 50.
+ 
+    Returns
+    -------
+    list[dict]
+        Each item is a dict with keys: _id, _index, _source.
+        Pass _id and _index to write_triage_result_to_es() after triage.
+    """
+    url = f"{ES_URL}/logs-wazuh.alerts-*/_search"
+    query = {
+        "size": size,
+        "sort": [{"@timestamp": "asc"}],
+        "query": {
+            "bool": {
+                "must": [
+                    {"range": {"@timestamp": {"gt": since_timestamp}}}
+                ],
+                "must_not": [
+                    {"exists": {"field": "triage.verdict"}}
+                ]
+            }
+        },
+        "_source": True
+    }
+    try:
+        resp = requests.get(url, json=query, auth=ES_AUTH, timeout=15)
+        hits = resp.json().get("hits", {}).get("hits", [])
+        return [
+            {"_id": h["_id"], "_index": h["_index"], "_source": h["_source"]}
+            for h in hits
+        ]
+    except Exception as exc:
+        print(f"[ES POLL] ❌ Exception: {exc}")
+        return []
 
 
 # ── quick CLI test ─────────────────────────────────────────────────────────────
@@ -242,3 +371,49 @@ if __name__ == "__main__":
     for l in logins[:3]:
         print(f"  {l.get('@timestamp','')} | groups={l.get('rule',{}).get('groups',[])} "
               f"| from {l.get('data',{}).get('srcip','?')}")
+
+def get_ip_seen_before(src_ip: str, lookback_days: int = 30) -> bool:
+    """
+    Check whether a source IP has appeared in Wazuh alerts before today.
+    Returns True if the IP is known (seen in the last `lookback_days` days),
+    False if it is brand new — which triggers a confidence boost in the scorer.
+
+    Uses a date range query that excludes the last 60 seconds so the alert
+    that triggered this call does not count as 'prior history'.
+    """
+    if not src_ip:
+        return True  # no IP → assume known, don't boost
+
+    query = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"term": {"data.srcip": src_ip}},
+                    {"range": {
+                        "@timestamp": {
+                            # look back N days, but stop 60s ago so the
+                            # triggering alert itself does not count
+                            "gte": f"now-{lookback_days}d/d",
+                            "lte": "now-60s"
+                        }
+                    }}
+                ]
+            }
+        },
+        "size": 0  # we only need the count, not the documents
+    }
+
+    try:
+        resp = requests.get(
+            f"{ES_URL}/logs-wazuh.alerts-*/_count",
+            auth=ES_AUTH,
+            json=query,
+            timeout=10
+        )
+        resp.raise_for_status()
+        count = resp.json().get("count", 0)
+        return count > 0   # True = seen before, False = brand new IP
+    except Exception as e:
+        # If the query fails, assume the IP is known — conservative default
+        print(f"[elastic_tools] get_ip_seen_before error: {e}")
+        return True

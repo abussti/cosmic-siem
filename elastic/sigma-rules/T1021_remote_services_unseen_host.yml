@@ -1,0 +1,51 @@
+title: Remote Services — Successful Auth from Previously Unseen Host
+id: a1b2c3d4-0004-4e5f-8a9b-c0d1e2f30004
+status: production
+description: >
+  Detects a successful authentication event originating from an agent hostname
+  that has not been seen authenticating before (new_terms detection type).
+  A new host suddenly authenticating successfully may indicate lateral movement
+  or a compromised endpoint joining the network.
+  Mapped to MITRE ATT&CK T1021 (Remote Services).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-15
+modified: 2026-05-15
+
+references:
+  - https://attack.mitre.org/techniques/T1021/
+
+tags:
+  - attack.lateral_movement
+  - attack.t1021
+
+logsource:
+  product: wazuh
+  service: sshd
+
+detection:
+  selection:
+    rule.groups|contains: authentication_success
+  new_terms:
+    - agent.name
+  condition: selection
+
+falsepositives:
+  - New endpoints being provisioned and logging in for the first time
+  - Legitimate new devices added to the network
+
+level: medium
+
+fields:
+  - data.srcip
+  - data.dstuser
+  - agent.name
+  - rule.description
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: new_terms
+# New terms field: agent.name
+# History window: 30d
+# Index: logs-wazuh.alerts-*
+# Query: rule.groups:authentication_success
+# MITRE: T1021 — Remote Services

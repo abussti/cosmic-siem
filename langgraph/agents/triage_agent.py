@@ -42,14 +42,14 @@ from tools.elastic_tools import get_recent_events, get_user_login_history
 #       export OPENAI_API_KEY=sk-...
 #       pip install openai --break-system-packages
 
-LLM_BACKEND  = "ollama"                        # ← change this to swap backends
+LLM_BACKEND  = "gemini"                        # ← change this to swap backends
 
 OLLAMA_URL   = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llama3.2:3b"
 
 CLAUDE_MODEL = "claude-sonnet-4-20250514"      # ready for when you switch
 OPENAI_MODEL = "gpt-4o-mini"
-
+GEMINI_MODEL = "gemini-2.5-flash"
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -103,6 +103,38 @@ def _call_llm(prompt: str) -> str:
             return msg.content[0].text.strip()
         except Exception as exc:
             return json.dumps({"verdict": "unknown", "summary": f"Claude API error: {exc}", "evidence": []})
+
+    if LLM_BACKEND == "gemini":
+        import os
+
+        try:
+            from google import genai
+        except ImportError:
+            return json.dumps({
+            "verdict": "unknown",
+            "summary": "Run: pip install google-genai --break-system-packages",
+            "evidence": []
+        })
+
+        try:
+            client = genai.Client(
+                api_key=os.environ["GEMINI_API_KEY"]
+            )
+
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+
+            return response.text.strip()
+
+        except Exception as exc:
+            return json.dumps({
+                "verdict": "unknown",
+                "summary": f"Gemini API error: {exc}",
+                "evidence": []
+        })
+
 
     if LLM_BACKEND == "openai":
         import os
@@ -377,6 +409,7 @@ def triage_node(state: dict) -> dict:
             "confidence":     confidence_label,
             "confidence_pct": conf_pct,
             "triage_result":  pre,
+            "technique":      pre.get("technique") or state.get("technique"),
             "escalate":       escalate,
         }
 
@@ -410,6 +443,7 @@ Return EXACTLY this JSON structure (no other text):
 {{
   "verdict": "suspicious" | "benign" | "unknown",
   "summary": "2-3 sentence plain-English explanation of your reasoning",
+  "technique": "T1110" | "T1059" | "T1078" | null,   # ← add this line
   "evidence": [
     "Evidence point 1",
     "Evidence point 2",
@@ -441,6 +475,7 @@ Return EXACTLY this JSON structure (no other text):
         "confidence":     confidence_label,
         "confidence_pct": conf_pct,
         "triage_result":  triage_result,
+        "technique":      triage_result.get("technique") or state.get("technique"),
         "escalate":       escalate,
     }
 

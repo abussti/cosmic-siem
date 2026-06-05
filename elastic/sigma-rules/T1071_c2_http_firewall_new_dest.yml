@@ -1,0 +1,52 @@
+title: C2 over HTTP — Firewall Accept to New External Destination
+id: a1b2c3d4-0010-4e5f-8a9b-c0d1e2f30010
+status: production
+description: >
+  Detects an accepted outbound firewall connection to an external destination
+  (agent host) that has not been seen before. Regular outbound connections to
+  new external IPs are a classic beaconing pattern used by C2 frameworks —
+  the implant calls home to a freshly registered domain or IP that has no
+  prior history in the environment.
+  Mapped to MITRE ATT&CK T1071 (Application Layer Protocol — C2 over HTTP/S).
+author: Ahmad Bussti — Cosmic Info Solutions
+date: 2026-05-20
+modified: 2026-05-20
+
+references:
+  - https://attack.mitre.org/techniques/T1071/
+
+tags:
+  - attack.command_and_control
+  - attack.t1071
+
+logsource:
+  product: wazuh
+  service: firewall
+
+detection:
+  selection:
+    rule.id: '100001'
+    rule.groups|contains: firewall
+  new_terms:
+    - agent.name
+  condition: selection
+
+falsepositives:
+  - Software updates connecting to new CDN endpoints
+  - Legitimate business applications contacting new cloud service IPs
+
+level: medium
+
+fields:
+  - agent.name
+  - data.srcip
+  - rule.description
+  - "@timestamp"
+
+# Elastic SIEM mapping
+# Type: new_terms
+# New terms field: agent.name
+# History window: 30d
+# Index: logs-wazuh.alerts-*
+# Query: rule.id:100001
+# MITRE: T1071 — Application Layer Protocol (C2 over HTTP)
