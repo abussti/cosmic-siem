@@ -2,17 +2,20 @@
 pipeline_runner.py
 ==================
 Day 17 — Full pipeline runner.
+Day 23 — CTI enrichment added: every alert is IOC-matched before scoring.
 
-Wazuh → Elastic → confidence_scorer → coordination_agent → triage_agent → ES write-back
+Wazuh → Elastic → CTI enrichment → confidence_scorer → coordination_agent
+       → triage_agent → ES write-back
 
 How it works
 ------------
 1. Poll Elasticsearch every POLL_INTERVAL seconds for new, unprocessed alerts
    (alerts where triage.verdict does not yet exist).
 2. For each new alert:
-     a. Score it with confidence_scorer.score_and_tier()
-     b. Build an AgentState and invoke the compiled LangGraph
-     c. If the pipeline produced a triage_result, write it back to ES
+     a. [NEW Day 23] Enrich with CTI data via match_alert_iocs()
+     b. Score it with confidence_scorer.score_and_tier()
+     c. Build an AgentState and invoke the compiled LangGraph
+     d. If the pipeline produced a triage_result, write it back to ES
         via elastic_tools.write_triage_result_to_es()
 3. Track the latest @timestamp seen so we never re-process the same alert.
 4. Print a structured trace for every alert so you can follow the full path.
@@ -41,18 +44,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ── LangGraph pipeline ──────────────────────────────────────────────────────
-# graph.py must expose a compiled graph object called `pipeline`
-# If your graph.py currently calls graph.compile() at module level and stores
-# it in a variable, make sure that variable is named `pipeline` OR alias it:
-#   pipeline = app   (if yours is called `app`)
 try:
-    from graph import pipeline          # preferred
+    from graph import pipeline
 except ImportError:
     try:
-        from graph import app as pipeline   # fallback alias
+        from graph import app as pipeline
     except ImportError:
         print("ERROR: could not import `pipeline` or `app` from graph.py")
-        print("       Make sure graph.py exposes the compiled graph at module level.")
         sys.exit(1)
 
 # ── Shared modules ──────────────────────────────────────────────────────────
@@ -61,6 +59,7 @@ from tools.elastic_tools import (
     get_unprocessed_alerts,
     write_triage_result_to_es,
 )
+from tools.ioc_matcher import match_alert_iocs   # ← Day 23
 from state import AgentState
 
 
@@ -68,8 +67,61 @@ from state import AgentState
 # Configuration
 # ---------------------------------------------------------------------------
 
-POLL_INTERVAL: int = 30          # seconds between ES polls
-BATCH_SIZE: int = 20             # max alerts per poll cycle
+POLL_INTERVAL: int = 30
+BATCH_SIZE: int = 20
+
+
+# ---------------------------------------------------------------------------
+# CTI Enrichment (Day 23)
+# ---------------------------------------------------------------------------
+
+def enrich_with_cti(alert: dict) -> dict:
+    """
+    Run IOC matching on alert and attach CTI fields directly to the alert dict.
+
+    Fields added:
+        alert["cti.matched"]      — bool
+        alert["cti.threat_actor"] — str | None
+        alert["cti.campaign"]     — str | None
+        alert["cti.confidence"]   — int (0–100, highest match wins)
+        alert["cti.source"]       — str | None
+
+    match_alert_iocs() may return either:
+      - a single dict  {matched, threat_actor, campaign, confidence, source}
+      - a list of such dicts (one per IOC field checked in the alert)
+
+    We normalise both to a single "worst case" result: if ANY indicator
+    matched we mark the alert as matched and keep the highest-confidence hit.
+    """
+    _EMPTY = {"matched": False, "threat_actor": None, "campaign": None,
+              "confidence": 0, "source": None}
+
+    try:
+        raw = match_alert_iocs(alert)
+    except Exception as exc:
+        _log(f"CTI    ⚠️  match_alert_iocs raised: {exc} — skipping enrichment")
+        raw = _EMPTY
+
+    # ── Normalise list → single best hit ─────────────────────────────────────
+    if isinstance(raw, list):
+        hits = [r for r in raw if isinstance(r, dict) and r.get("matched")]
+        if hits:
+            # Pick the hit with the highest CTI confidence score
+            cti = max(hits, key=lambda r: r.get("confidence", 0))
+        else:
+            cti = _EMPTY
+    elif isinstance(raw, dict):
+        cti = raw
+    else:
+        _log(f"CTI    ⚠️  unexpected return type from match_alert_iocs: {type(raw)} — skipping")
+        cti = _EMPTY
+
+    alert["cti.matched"]      = cti.get("matched", False)
+    alert["cti.threat_actor"] = cti.get("threat_actor")
+    alert["cti.campaign"]     = cti.get("campaign")
+    alert["cti.confidence"]   = cti.get("confidence", 0)
+    alert["cti.source"]       = cti.get("source")
+    return alert
 
 
 # ---------------------------------------------------------------------------
@@ -116,12 +168,25 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
     trace_lines.append(f"- **ES id:** `{es_id}`")
     trace_lines.append(f"- **ES index:** `{es_index}`")
 
-    # Step 1 — confidence score -----------------------------------------------
+    # ── Step 1 — CTI enrichment (Day 23) ─────────────────────────────────────
+    _log("CTI    running IOC match…")
+    source = enrich_with_cti(source)
+    cti_matched = source["cti.matched"]
+    cti_actor   = source["cti.threat_actor"] or "none"
+    cti_conf    = source["cti.confidence"]
+    cti_src     = source["cti.source"] or "n/a"
+    _log(f"CTI    matched={cti_matched}  actor={cti_actor}  conf={cti_conf}  source={cti_src}")
+    trace_lines.append(
+        f"- **CTI match:** `{cti_matched}` | actor=`{cti_actor}` | "
+        f"cti_confidence={cti_conf} | source=`{cti_src}`"
+    )
+
+    # ── Step 2 — confidence score ─────────────────────────────────────────────
     confidence_pct, routing_tier = score_and_tier(source)
     _log(f"SCORE  confidence_pct={confidence_pct}%  tier={routing_tier}")
     trace_lines.append(f"- **Confidence score:** {confidence_pct}%  →  tier `{routing_tier}`")
 
-    # Step 2 — build initial AgentState ---------------------------------------
+    # ── Step 3 — build initial AgentState ─────────────────────────────────────
     initial_state: AgentState = {
         "alert": source,
         "alert_es_id": es_id,
@@ -134,7 +199,7 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
         "triage_result": None,
     }
 
-    # Step 3 — invoke LangGraph pipeline --------------------------------------
+    # ── Step 4 — invoke LangGraph pipeline ────────────────────────────────────
     _log("GRAPH  invoking LangGraph pipeline…")
     try:
         final_state: AgentState = pipeline.invoke(initial_state)
@@ -143,7 +208,7 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
         trace_lines.append(f"- **Pipeline error:** `{exc}`")
         return None
 
-    # Step 4 — extract results ------------------------------------------------
+    # ── Step 5 — extract results ───────────────────────────────────────────────
     triage_result = final_state.get("triage_result")
     notes = final_state.get("notes", [])
     escalate = final_state.get("escalate", False)
@@ -158,7 +223,7 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
         trace_lines.append(f"  - {note}")
     trace_lines.append(f"- **Escalate to analyst:** {escalate}")
 
-    # Step 5 — write triage result back to ES ---------------------------------
+    # ── Step 6 — write triage result back to ES ───────────────────────────────
     if triage_result:
         verdict = triage_result.get("verdict", "unknown")
         summary = triage_result.get("summary", "")
@@ -191,20 +256,7 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
 
 
 def main(run_once: bool = False, since: str | None = None) -> None:
-    """
-    Main polling loop.
-
-    Parameters
-    ----------
-    run_once : bool
-        If True, poll once and exit instead of looping.
-    since : str | None
-        ISO-8601 start timestamp. Defaults to "now minus 10 minutes" so
-        a fresh run picks up recent alerts without reprocessing old history.
-    """
     if since is None:
-        # Default: start 10 minutes in the past so we catch recent alerts
-        # without reprocessing the entire 2300-alert backlog.
         from datetime import timedelta
         since = (
             datetime.now(timezone.utc) - timedelta(minutes=10)
@@ -213,7 +265,7 @@ def main(run_once: bool = False, since: str | None = None) -> None:
     last_seen_ts: str = since
     cycle: int = 0
     trace_lines: list[str] = [
-        "# Day 17 — End-to-End Pipeline Trace",
+        "# Day 23 — End-to-End Pipeline Trace (with CTI Enrichment)",
         "",
         f"**Generated:** {datetime.now(timezone.utc).isoformat()}  ",
         f"**Start timestamp:** {since}  ",
@@ -237,11 +289,9 @@ def main(run_once: bool = False, since: str | None = None) -> None:
                 ts = hit["_source"].get("@timestamp", last_seen_ts)
                 run_pipeline_once(hit, trace_lines)
 
-                # Advance the watermark so we never re-process this alert
                 if ts > last_seen_ts:
                     last_seen_ts = ts
 
-            # Write trace after every cycle so it's always up to date
             _write_trace(trace_lines)
 
             if run_once:
@@ -270,7 +320,6 @@ def _write_trace(lines: list[str]) -> None:
     docs_dir.mkdir(parents=True, exist_ok=True)
     trace_path = docs_dir / "pipeline-trace.md"
     trace_path.write_text("\n".join(lines), encoding="utf-8")
-    # Also write to /mnt/user-data/outputs for download (dev environment only)
     try:
         Path("/mnt/user-data/outputs/pipeline-trace.md").write_text(
             "\n".join(lines), encoding="utf-8"
@@ -285,19 +334,11 @@ def _write_trace(lines: list[str]) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Day 17 — SIEM pipeline runner. Polls Elastic and runs LangGraph."
+        description="Day 23 — SIEM pipeline runner with CTI enrichment."
     )
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Poll once and exit (useful for testing).",
-    )
-    parser.add_argument(
-        "--since",
-        type=str,
-        default=None,
-        help='ISO-8601 start timestamp, e.g. "2026-06-02T10:00:00.000Z". '
-             "Defaults to 10 minutes ago.",
-    )
+    parser.add_argument("--once", action="store_true",
+                        help="Poll once and exit (useful for testing).")
+    parser.add_argument("--since", type=str, default=None,
+                        help='ISO-8601 start timestamp. Defaults to 10 minutes ago.')
     args = parser.parse_args()
     main(run_once=args.once, since=args.since)
