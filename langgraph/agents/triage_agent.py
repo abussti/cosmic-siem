@@ -4,15 +4,21 @@ triage_agent.py — LangGraph node: Triage Agent.
 Day 14 — initial implementation (Ollama)
 Day 19 — Gemini 2.5 Flash backend; technique propagation fix; after-hours/new-IP boosts
 Day 23 — CTI context block injected into Gemini prompt
+Day 24 — when CTI match found, automatically calls get_threat_actor_profile()
+          and folds campaigns/TTPs/target sectors into the prompt AND the
+          final summary (deterministic append — not dependent on the LLM
+          choosing to repeat it).
 
 What this agent does:
   1. Pulls source IP and user from the incoming alert.
   2. Calls get_recent_events()      — last 60 min activity from that IP.
   3. Calls get_user_login_history() — 7-day history for the targeted user.
   4. [Day 23] Reads CTI enrichment fields already attached by pipeline_runner.
-  5. Builds a structured prompt (including CTI section) and calls Gemini.
-  6. Parses the LLM response into {verdict, summary, evidence, technique}.
-  7. Writes verdict + confidence score back into AgentState.
+  5. [Day 24] If CTI matched, calls get_threat_actor_profile() for that actor.
+  6. Builds a structured prompt (including CTI + actor profile) and calls Gemini.
+  7. Parses the LLM response into {verdict, summary, evidence, technique}.
+  8. [Day 24] Appends actor profile context to the summary deterministically.
+  9. Writes verdict + confidence score back into AgentState.
 """
 
 import json
@@ -23,7 +29,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from tools.elastic_tools import get_recent_events, get_user_login_history
+from tools.elastic_tools import get_recent_events, get_user_login_history, get_threat_actor_profile
 
 # ── LLM backend config ────────────────────────────────────────────────────────
 LLM_BACKEND  = "gemini"
@@ -55,10 +61,14 @@ def _summarise_events(events: list) -> str:
     return "\n".join(lines)
 
 
-def _build_cti_block(alert: dict) -> str:
+def _build_cti_block(alert: dict, actor_profile: dict | None = None) -> str:
     """
     [Day 23] Build the CTI section of the triage prompt from enrichment fields
     already attached to the alert dict by pipeline_runner.enrich_with_cti().
+
+    [Day 24] If actor_profile was resolved (passed in by triage_node), append
+    known campaigns / TTPs / target sectors so the LLM has full context, not
+    just the bare actor name.
 
     If no match was found, we still include the section so the model knows
     we checked and found nothing — avoids it inferring we simply didn't look.
@@ -69,8 +79,15 @@ def _build_cti_block(alert: dict) -> str:
     cti_conf    = alert.get("cti.confidence", 0)
     cti_source  = alert.get("cti.source")       or "n/a"
 
-    if matched:
-        return f"""
+    if not matched:
+        return """
+=== THREAT INTELLIGENCE (CTI) ===
+- No IOC match found for source IP, domains, or hashes in siem-threat-intel.
+- Absence of a CTI match does not rule out a threat — it may be a new actor
+  or an IP not yet tracked by AlienVault OTX / URLhaus.
+"""
+
+    block = f"""
 === THREAT INTELLIGENCE (CTI) ===
 ⚠️  SOURCE IP MATCHED A KNOWN MALICIOUS INDICATOR
 - IOC source    : {cti_source}
@@ -82,13 +99,46 @@ This IP is tracked in our threat intelligence index (siem-threat-intel).
 Weight this heavily — an IOC match from a reputable feed significantly
 increases the probability that this alert is a REAL attack.
 """
-    else:
-        return """
-=== THREAT INTELLIGENCE (CTI) ===
-- No IOC match found for source IP, domains, or hashes in siem-threat-intel.
-- Absence of a CTI match does not rule out a threat — it may be a new actor
-  or an IP not yet tracked by AlienVault OTX / URLhaus.
-"""
+
+    if actor_profile and actor_profile.get("found"):
+        profile_lines = ["", "THREAT ACTOR PROFILE:"]
+        if actor_profile.get("known_campaigns"):
+            profile_lines.append(f"- Known campaigns: {', '.join(actor_profile['known_campaigns'])}")
+        if actor_profile.get("ttps"):
+            profile_lines.append(f"- Known TTPs: {', '.join(actor_profile['ttps'])}")
+        if actor_profile.get("target_sectors"):
+            profile_lines.append(f"- Typically targets: {', '.join(actor_profile['target_sectors'])}")
+        profile_lines.append(
+            f"- {actor_profile.get('ioc_count', 0)} IOCs on record for this actor "
+            f"(sources: {', '.join(actor_profile.get('sources', [])) or 'n/a'})."
+        )
+        block += "\n".join(profile_lines) + "\n"
+
+    return block
+
+
+def _attach_actor_profile_to_summary(triage_result: dict, actor_profile: dict | None,
+                                      actor_name: str | None) -> dict:
+    """
+    [Day 24] Guarantees the threat actor profile appears in the final summary,
+    independent of whether the LLM chose to repeat it. Mutates and returns
+    triage_result.
+    """
+    if not actor_profile or not actor_profile.get("found") or not actor_name:
+        return triage_result
+
+    note = f" [Threat actor profile: {actor_name}"
+    if actor_profile.get("known_campaigns"):
+        note += f" — campaigns: {', '.join(actor_profile['known_campaigns'])}"
+    if actor_profile.get("ttps"):
+        note += f" — TTPs: {', '.join(actor_profile['ttps'])}"
+    if actor_profile.get("target_sectors"):
+        note += f" — targets: {', '.join(actor_profile['target_sectors'])}"
+    note += "]"
+
+    triage_result["summary"] = triage_result.get("summary", "") + note
+    triage_result["actor_profile"] = actor_profile
+    return triage_result
 
 
 def _call_llm(prompt: str) -> str:
@@ -326,12 +376,25 @@ def triage_node(state: dict) -> dict:
 
     # [Day 23] Read CTI enrichment fields
     cti_matched = alert.get("cti.matched", False)
+    cti_actor   = alert.get("cti.threat_actor")
 
     notes.append(f"[triage] Alert: rule {rule_id} | level {rule_lvl} | src={src_ip} | user={dst_user}")
     if cti_matched:
         notes.append(
-            f"[triage] ⚠️  CTI match: actor={alert.get('cti.threat_actor')} "
+            f"[triage] ⚠️  CTI match: actor={cti_actor} "
             f"source={alert.get('cti.source')} conf={alert.get('cti.confidence')}%"
+        )
+
+    # [Day 24] Resolve threat actor profile up front if there's a CTI match
+    # with a real (non-"unknown") actor name. Resolving it here — rather than
+    # inside _build_cti_block — lets us reuse the same profile object for
+    # both the prompt and the post-LLM summary append, with only one ES call.
+    actor_profile = None
+    if cti_matched and cti_actor and cti_actor != "unknown":
+        actor_profile = get_threat_actor_profile(cti_actor)
+        notes.append(
+            f"[triage] get_threat_actor_profile({cti_actor}) → "
+            f"found={actor_profile['found']} source={actor_profile['profile_source']}"
         )
 
     recent_events = []
@@ -374,8 +437,8 @@ def triage_node(state: dict) -> dict:
     else:
         notes.append("[triage] No pre-classifier match — calling Gemini for analysis...")
 
-    # [Day 23] Build CTI section
-    cti_block = _build_cti_block(alert)
+    # [Day 23/24] Build CTI section, now with actor profile folded in
+    cti_block = _build_cti_block(alert, actor_profile)
 
     prompt = f"""You are a cybersecurity analyst reviewing a SIEM alert. Analyse the evidence below and return ONLY a JSON object — no explanation, no markdown, no text before or after the JSON.
 
@@ -401,6 +464,8 @@ Based on the alert and supporting evidence above, decide:
 - What are 2-4 specific pieces of evidence that support your verdict?
 
 If the CTI section shows an IOC match, treat that as strong evidence of a real threat.
+If a threat actor profile is provided, reference the actor's known campaigns
+or TTPs in your summary when relevant.
 
 Return EXACTLY this JSON structure (no other text):
 {{
@@ -416,6 +481,11 @@ Return EXACTLY this JSON structure (no other text):
 
     raw_response  = _call_llm(prompt)
     triage_result = _parse_llm_output(raw_response)
+
+    # [Day 24] Deterministically attach the actor profile to the summary —
+    # don't rely on the LLM having included it, since JSON-mode responses
+    # are short and may omit it even when given in the prompt.
+    triage_result = _attach_actor_profile_to_summary(triage_result, actor_profile, cti_actor)
 
     notes.append(f"[triage] Verdict: {triage_result['verdict']} | {triage_result['summary'][:80]}...")
 
@@ -453,8 +523,11 @@ if __name__ == "__main__":
         "agent": {"name": "agent1"},
         "@timestamp": "2026-06-16T02:00:00Z",
         # CTI fields (normally attached by pipeline_runner.enrich_with_cti)
+        # NOTE: set cti.threat_actor to a real actor name (e.g. one present
+        # in your siem-threat-intel data, or a seed-table name like "APT28")
+        # to exercise the Day 24 actor-profile path. "unknown" will skip it.
         "cti.matched":      True,
-        "cti.threat_actor": "unknown",
+        "cti.threat_actor": "APT28",
         "cti.campaign":     None,
         "cti.confidence":   50,
         "cti.source":       "otx",

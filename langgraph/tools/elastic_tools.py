@@ -417,3 +417,235 @@ def get_ip_seen_before(src_ip: str, lookback_days: int = 30) -> bool:
         # If the query fails, assume the IP is known — conservative default
         print(f"[elastic_tools] get_ip_seen_before error: {e}")
         return True
+
+# ── Day 24 additions to tools/elastic_tools.py ──────────────────────────────
+# Paste these two functions into elastic_tools.py (after get_ip_seen_before).
+#
+# CORRECTED: this file has no `es` client object — every other function uses
+# the _post()/_get() helpers (or raw requests.get with a json body, as in
+# get_unprocessed_alerts / get_ip_seen_before) against ES_URL/ES_AUTH defined
+# at the top of the file. Both functions below now use _post(), matching the
+# rest of the file's convention exactly.
+
+# Seed table — curated profiles for known actors. Extend this dict as you
+# encounter named actors in your OTX/URLhaus tags. Keys are lowercased for
+# case-insensitive lookup.
+_THREAT_ACTOR_SEED = {
+    "apt28": {
+        "known_campaigns": ["Fancy Bear", "Pawn Storm", "Sednit"],
+        "ttps": ["T1566 Phishing", "T1071 C2 over web protocols", "T1078 Valid Accounts"],
+        "target_sectors": ["Government", "Defense", "Media"],
+    },
+    "apt29": {
+        "known_campaigns": ["Cozy Bear", "The Dukes"],
+        "ttps": ["T1078 Valid Accounts", "T1059 Command and Scripting Interpreter", "T1003 Credential Dumping"],
+        "target_sectors": ["Government", "Think Tanks", "Healthcare"],
+    },
+    "lazarus group": {
+        "known_campaigns": ["Operation Dream Job", "AppleJeus"],
+        "ttps": ["T1566 Phishing", "T1486 Data Encrypted for Impact", "T1071 C2 over HTTP"],
+        "target_sectors": ["Finance", "Cryptocurrency", "Defense"],
+    },
+    "fin7": {
+        "known_campaigns": ["Carbanak"],
+        "ttps": ["T1566 Phishing", "T1059 Command and Scripting Interpreter", "T1003 Credential Dumping"],
+        "target_sectors": ["Retail", "Hospitality", "Finance"],
+    },
+}
+
+
+def get_threat_actor_profile(actor_name: str) -> dict:
+    """
+    Day 24 — returns known campaigns, TTPs, and target sectors for a threat actor.
+
+    Lookup order:
+      1. Curated seed table (_THREAT_ACTOR_SEED) for named APT/crimeware groups.
+      2. Fallback: live aggregation from siem-threat-intel (via _post, same as
+         every other query in this file) — counts IOCs attributed to this
+         actor, collects sources and tags as a TTP/context proxy, and returns
+         last_seen.
+
+    Returns:
+        {
+            'actor_name': str,
+            'found': bool,
+            'known_campaigns': list[str],
+            'ttps': list[str],
+            'target_sectors': list[str],
+            'ioc_count': int,            # from siem-threat-intel, always populated
+            'sources': list[str],        # e.g. ['otx', 'urlhaus']
+            'last_seen': str | None,     # ISO timestamp of most recent IOC
+            'profile_source': 'seed' | 'aggregated' | 'not_found',
+        }
+    """
+    if not actor_name:
+        return {
+            "actor_name": actor_name,
+            "found": False,
+            "known_campaigns": [],
+            "ttps": [],
+            "target_sectors": [],
+            "ioc_count": 0,
+            "sources": [],
+            "last_seen": None,
+            "profile_source": "not_found",
+        }
+
+    key = actor_name.strip().lower()
+
+    # Always pull live aggregate stats from siem-threat-intel, regardless of
+    # seed match, so ioc_count/sources/last_seen stay accurate.
+    agg_query = {
+        "size": 0,
+        "query": {"term": {"threat_actor": actor_name}},
+        "aggs": {
+            "sources": {"terms": {"field": "source", "size": 10}},
+            "tags": {"terms": {"field": "tags", "size": 20}},
+            "last_seen": {"max": {"field": "last_seen"}},
+        },
+    }
+
+    ioc_count = 0
+    sources = []
+    tags = []
+    last_seen = None
+
+    try:
+        raw = _post("siem-threat-intel/_search", agg_query)
+        ioc_count = raw.get("hits", {}).get("total", {}).get("value", 0)
+        aggs = raw.get("aggregations", {})
+        sources = [b["key"] for b in aggs.get("sources", {}).get("buckets", [])]
+        tags = [b["key"] for b in aggs.get("tags", {}).get("buckets", [])]
+        last_seen = aggs.get("last_seen", {}).get("value_as_string")
+    except Exception as e:
+        # Index may not have this actor, or ES may be briefly unavailable —
+        # degrade gracefully rather than crashing the agent.
+        print(f"[get_threat_actor_profile] aggregation query failed: {e}")
+
+    seed = _THREAT_ACTOR_SEED.get(key)
+
+    if seed:
+        return {
+            "actor_name": actor_name,
+            "found": True,
+            "known_campaigns": seed["known_campaigns"],
+            "ttps": seed["ttps"],
+            "target_sectors": seed["target_sectors"],
+            "ioc_count": ioc_count,
+            "sources": sources,
+            "last_seen": last_seen,
+            "profile_source": "seed",
+        }
+
+    if ioc_count > 0:
+        # No curated profile, but we have live IOC data — build a best-effort
+        # profile from what's actually in the index. Tags stand in for TTPs
+        # since that's the closest field we ingest today.
+        return {
+            "actor_name": actor_name,
+            "found": True,
+            "known_campaigns": [],
+            "ttps": tags,
+            "target_sectors": [],
+            "ioc_count": ioc_count,
+            "sources": sources,
+            "last_seen": last_seen,
+            "profile_source": "aggregated",
+        }
+
+    return {
+        "actor_name": actor_name,
+        "found": False,
+        "known_campaigns": [],
+        "ttps": [],
+        "target_sectors": [],
+        "ioc_count": 0,
+        "sources": [],
+        "last_seen": None,
+        "profile_source": "not_found",
+    }
+
+
+def get_ioc_history(ioc_value: str) -> dict:
+    """
+    Day 24 — returns all alerts in the last 30 days that matched this IOC.
+
+    Searches logs-wazuh.alerts-* (same INDEX pattern used elsewhere in this
+    file) across the common IOC-bearing fields (data.srcip, data.dstip,
+    data.url, data.hash) for an exact match on ioc_value, sorted
+    most-recent-first.
+
+    Returns:
+        {
+            'ioc_value': str,
+            'match_count': int,
+            'alerts': [
+                {
+                    'timestamp': str,
+                    'rule_id': str,
+                    'rule_description': str,
+                    'rule_level': int,
+                    'agent_name': str,
+                    'matched_field': str,   # which field matched, e.g. 'data.srcip'
+                },
+                ...
+            ],
+        }
+    """
+    query = {
+        "size": 50,
+        "sort": [{"@timestamp": "desc"}],
+        "query": {
+            "bool": {
+                "filter": [
+                    {"range": {"@timestamp": {"gte": "now-30d"}}},
+                    {
+                        "bool": {
+                            "should": [
+                                {"term": {"data.srcip": ioc_value}},
+                                {"term": {"data.dstip": ioc_value}},
+                                {"term": {"data.url": ioc_value}},
+                                {"term": {"data.hash": ioc_value}},
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
+                ]
+            }
+        },
+        "_source": ["@timestamp", "rule.id", "rule.description", "rule.level", "agent.name",
+                    "data.srcip", "data.dstip", "data.url", "data.hash"],
+    }
+
+    alerts = []
+    match_count = 0
+
+    try:
+        raw = _post(f"{INDEX}/_search", query)
+        match_count = raw.get("hits", {}).get("total", {}).get("value", 0)
+        for hit in raw.get("hits", {}).get("hits", []):
+            src = hit.get("_source", {})
+            data = src.get("data", {})
+
+            matched_field = None
+            for field in ("srcip", "dstip", "url", "hash"):
+                if data.get(field) == ioc_value:
+                    matched_field = f"data.{field}"
+                    break
+
+            alerts.append({
+                "timestamp": src.get("@timestamp"),
+                "rule_id": src.get("rule", {}).get("id"),
+                "rule_description": src.get("rule", {}).get("description"),
+                "rule_level": src.get("rule", {}).get("level"),
+                "agent_name": src.get("agent", {}).get("name"),
+                "matched_field": matched_field,
+            })
+    except Exception as e:
+        print(f"[get_ioc_history] query failed: {e}")
+
+    return {
+        "ioc_value": ioc_value,
+        "match_count": match_count,
+        "alerts": alerts,
+    }
