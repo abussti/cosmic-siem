@@ -3,13 +3,22 @@
 # Previously a stub (Day 15 skipped). Now implements correlated hunting
 # for the T1078 after-hours + new-IP + privilege-escalation pattern.
 # Day 19: full implementation (B3 fix)
+# Day 26: added a SECOND, alert-independent hunting engine below
+#         (HuntPlaybook / run_hunt / run_all_default_hunts). See the
+#         banner comment further down for the boundary between the two.
 
+import logging
+from dataclasses import dataclass
+from typing import Any
 from datetime import datetime, timezone, timedelta
 from tools.elastic_tools import (
     get_alerts_by_src_ip,
     get_user_login_history,
     get_high_severity_alerts,
+    _post,
 )
+
+logger = logging.getLogger("hunting_agent")
 
 
 # How far back to look when correlating related events
@@ -122,7 +131,7 @@ def hunting_node(state: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers (Day 19)
 # ---------------------------------------------------------------------------
 
 def _extract_username(alert: dict) -> str:
@@ -163,3 +172,219 @@ def _within_window(ts_anchor: str, ts_event: str, window_minutes: int) -> bool:
         return delta <= window_minutes * 60
     except (ValueError, TypeError):
         return False
+
+
+# ============================================================================
+# Day 26 — Proactive Hunting Engine (scheduled, alert-independent)
+# ============================================================================
+# Everything ABOVE this line is the Day 19 hunting_node — REACTIVE. It only
+# ever runs once an alert has already cleared coordination + triage in the
+# main graph (graph.py: triage -> hunting -> response).
+#
+# Everything BELOW this line is NEW. It is a generic, playbook-driven engine
+# that runs on a timer with no triggering alert at all — give it a name, a
+# lookback window, and a raw Elastic DSL clause, and it runs. Wired into
+# graph.py as its own parallel branch (scheduled_hunt_node / hunt_pipeline)
+# and invoked by the scheduler in pipeline_runner.py every 6 hours.
+# ============================================================================
+
+ALERTS_INDEX = "logs-wazuh.alerts-*"
+
+# Escalate as soon as a scheduled hunt turns up at least this many hits.
+# Tune upward later if this proves too noisy.
+ESCALATION_THRESHOLD = 1
+
+
+@dataclass
+class HuntPlaybook:
+    hunt_name: str
+    time_window: int          # lookback window, in hours
+    hunt_query: dict           # Elastic DSL clause; {} = match_all
+    index: str = ALERTS_INDEX
+
+
+def _build_time_ranged_query(hunt_query: dict, time_window: int) -> dict:
+    """
+    Wrap a playbook's hunt_query with a time range filter for the last
+    `time_window` hours. Handles three shapes of hunt_query:
+      - {}                      -> match_all within the window
+      - {"bool": {...}}         -> graft the range filter into it
+      - {<bare query clause>}   -> wrap it in a bool/must
+    """
+    range_filter = {
+        "range": {
+            "@timestamp": {
+                "gte": f"now-{time_window}h",
+                "lte": "now",
+            }
+        }
+    }
+
+    if not hunt_query:
+        # Empty query → match_all in-window. This is exactly the Day 26
+        # acceptance check: "run with an empty hunt query, verify no crash."
+        return {
+            "size": 100,
+            "query": {
+                "bool": {
+                    "must": [{"match_all": {}}],
+                    "filter": [range_filter],
+                }
+            },
+            "sort": [{"@timestamp": "desc"}],
+        }
+
+    if "bool" in hunt_query:
+        merged = dict(hunt_query["bool"])
+        merged.setdefault("filter", [])
+        merged["filter"] = merged["filter"] + [range_filter]
+        return {
+            "size": 100,
+            "query": {"bool": merged},
+            "sort": [{"@timestamp": "desc"}],
+        }
+
+    return {
+        "size": 100,
+        "query": {
+            "bool": {
+                "must": [hunt_query],
+                "filter": [range_filter],
+            }
+        },
+        "sort": [{"@timestamp": "desc"}],
+    }
+
+
+def run_hunt(playbook: HuntPlaybook) -> dict:
+    """
+    Execute one hunt playbook against Elasticsearch. Always returns the
+    standard contract — never raises, even on ES errors or malformed
+    queries, since this runs unattended on a scheduler.
+
+    Returns:
+        {threats_found: int, findings: list[dict], hunt_summary: str, escalate: bool}
+    """
+    es_body = _build_time_ranged_query(playbook.hunt_query, playbook.time_window)
+
+    try:
+        resp = _post(f"{playbook.index}/_search", es_body)
+    except Exception as exc:
+        logger.error("Hunt '%s' failed to query ES: %s", playbook.hunt_name, exc)
+        return {
+            "threats_found": 0,
+            "findings": [],
+            "hunt_summary": f"Hunt '{playbook.hunt_name}' errored before returning results: {exc}",
+            "escalate": False,
+        }
+
+    hits = resp.get("hits", {}).get("hits", [])
+
+    findings: list[dict[str, Any]] = []
+    for hit in hits:
+        src = hit.get("_source", {})
+        findings.append({
+            "es_id": hit.get("_id"),
+            "timestamp": src.get("@timestamp"),
+            "rule_id": src.get("rule", {}).get("id"),
+            "rule_description": src.get("rule", {}).get("description"),
+            "agent_name": src.get("agent", {}).get("name"),
+            "src_ip": src.get("data", {}).get("srcip"),
+            "dst_user": src.get("data", {}).get("dstuser"),
+        })
+
+    threats_found = len(findings)
+    escalate = threats_found >= ESCALATION_THRESHOLD
+
+    if threats_found == 0:
+        hunt_summary = (
+            f"Hunt '{playbook.hunt_name}' ran over the last {playbook.time_window}h "
+            f"window and found nothing of interest."
+        )
+    else:
+        top = findings[0]
+        hunt_summary = (
+            f"Hunt '{playbook.hunt_name}' found {threats_found} matching event(s) "
+            f"in the last {playbook.time_window}h. "
+            f"Top hit: rule {top['rule_id']} ({top['rule_description']}) from {top['src_ip']}."
+        )
+
+    return {
+        "threats_found": threats_found,
+        "findings": findings,
+        "hunt_summary": hunt_summary,
+        "escalate": escalate,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Default hunt playbook registry
+# ---------------------------------------------------------------------------
+# Add new hunting hypotheses here — name + lookback window + DSL clause.
+# No code changes needed to add a hunt; that's the whole point of this
+# scaffold vs. the hardcoded Hunt 1/2/3 logic in hunting_node() above.
+
+DEFAULT_PLAYBOOKS: list[HuntPlaybook] = [
+    HuntPlaybook(
+        hunt_name="after_hours_logins",
+        time_window=24,
+        hunt_query={
+            "bool": {
+                "must": [{"terms": {"rule.groups": ["authentication_success"]}}],
+                "filter": [{
+                    "script": {
+                        "script": {
+                            "source": (
+                                "doc['data.login_hour'].size() > 0 && "
+                                "(doc['data.login_hour'].value < 6 || "
+                                "doc['data.login_hour'].value > 22)"
+                            )
+                        }
+                    }
+                }],
+            }
+        },
+    ),
+    HuntPlaybook(
+        hunt_name="privilege_escalation_spike",
+        time_window=6,
+        hunt_query={"bool": {"must": [{"terms": {"rule.groups": ["sudo"]}}]}},
+    ),
+    # NOTE: a match_all/empty-query playbook deliberately does NOT live here.
+    # With ESCALATION_THRESHOLD=1, a match_all hunt would escalate on every
+    # single 6h cycle as long as ANY log exists — pure noise. The empty-query
+    # acceptance check (Day 26 deliverable 6) is exercised standalone in the
+    # __main__ block below instead, via a one-off HuntPlaybook that never
+    # gets registered into the scheduled production run.
+]
+
+
+def run_all_default_hunts() -> list[dict]:
+    """
+    Run every playbook in DEFAULT_PLAYBOOKS. Called by scheduled_hunt_node
+    in graph.py (which is in turn invoked by the scheduler in
+    pipeline_runner.py every 6 hours), and by the standalone smoke test below.
+    """
+    results = []
+    for playbook in DEFAULT_PLAYBOOKS:
+        logger.info("Running hunt playbook: %s", playbook.hunt_name)
+        result = run_hunt(playbook)
+        result["hunt_name"] = playbook.hunt_name
+        results.append(result)
+    return results
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    print("=== Hunting Agent — Day 26 standalone smoke test ===\n")
+
+    # Required Day 26 acceptance check: empty hunt query must not crash.
+    empty_playbook = HuntPlaybook(hunt_name="manual_empty_test", time_window=1, hunt_query={})
+    result = run_hunt(empty_playbook)
+    print(f"[empty query test] threats_found={result['threats_found']} escalate={result['escalate']}")
+    print(f"  summary: {result['hunt_summary']}\n")
+
+    print("=== Running all default (production) playbooks ===")
+    for r in run_all_default_hunts():
+        print(f"- {r['hunt_name']}: threats_found={r['threats_found']} escalate={r['escalate']}")
+        print(f"  {r['hunt_summary']}")

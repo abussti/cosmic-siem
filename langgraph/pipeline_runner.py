@@ -3,29 +3,37 @@ pipeline_runner.py
 ==================
 Day 17 — Full pipeline runner.
 Day 23 — CTI enrichment added: every alert is IOC-matched before scoring.
+Day 26 — Proactive hunt scheduler added: runs hunt_pipeline from graph.py
+         every 6 hours, completely independent of the alert poll loop below.
 
 Wazuh → Elastic → CTI enrichment → confidence_scorer → coordination_agent
        → triage_agent → ES write-back
+
+                              (in parallel, no alert needed)
+                  APScheduler ──every 6h──> hunt_pipeline.invoke(...)
 
 How it works
 ------------
 1. Poll Elasticsearch every POLL_INTERVAL seconds for new, unprocessed alerts
    (alerts where triage.verdict does not yet exist).
 2. For each new alert:
-     a. [NEW Day 23] Enrich with CTI data via match_alert_iocs()
+     a. [Day 23] Enrich with CTI data via match_alert_iocs()
      b. Score it with confidence_scorer.score_and_tier()
      c. Build an AgentState and invoke the compiled LangGraph
      d. If the pipeline produced a triage_result, write it back to ES
         via elastic_tools.write_triage_result_to_es()
 3. Track the latest @timestamp seen so we never re-process the same alert.
 4. Print a structured trace for every alert so you can follow the full path.
+5. [Day 26] In the background, on a separate 6-hour timer that runs whether
+   or not any alert has ever been seen, invoke hunt_pipeline (graph.py) —
+   the proactive hunting branch — and log its findings.
 
 Usage
 -----
   cd ~/elastic/langgraph
   python3 pipeline_runner.py
 
-  # Run once (no loop — useful for testing):
+  # Run once (no loop, no hunt scheduler — useful for testing):
   python3 pipeline_runner.py --once
 
   # Start from a specific timestamp:
@@ -53,6 +61,16 @@ except ImportError:
         print("ERROR: could not import `pipeline` or `app` from graph.py")
         sys.exit(1)
 
+# ── Day 26 — proactive hunting branch (separate compiled graph) ────────────
+try:
+    from graph import hunt_pipeline
+except ImportError:
+    print("WARNING: could not import `hunt_pipeline` from graph.py — "
+          "Day 26 scheduled hunts disabled for this run.")
+    hunt_pipeline = None
+
+from apscheduler.schedulers.background import BackgroundScheduler
+
 # ── Shared modules ──────────────────────────────────────────────────────────
 from confidence_scorer import score_and_tier
 from tools.elastic_tools import (
@@ -69,6 +87,7 @@ from state import AgentState
 
 POLL_INTERVAL: int = 30
 BATCH_SIZE: int = 20
+HUNT_INTERVAL_HOURS: int = 6   # Day 26 — scheduled hunt cadence
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +274,65 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
     return final_state
 
 
+# ---------------------------------------------------------------------------
+# Day 26 — Proactive Hunting Scheduler
+# ---------------------------------------------------------------------------
+
+def run_scheduled_hunts() -> None:
+    """
+    One scheduled hunt cycle. Invokes hunt_pipeline (the parallel branch
+    defined in graph.py) with an empty/neutral AgentState — there is no
+    triggering alert, which is the whole point. Runs on its own APScheduler
+    timer below; never called from the alert poll loop in main().
+    """
+    if hunt_pipeline is None:
+        _log("HUNT   ⚠️  hunt_pipeline unavailable — skipping scheduled hunt cycle")
+        return
+
+    _log(f"{'═' * 70}")
+    _log("HUNT   starting scheduled hunt cycle…")
+
+    initial_state: AgentState = {
+        "alert": {},
+        "alert_es_id": None,
+        "alert_es_index": None,
+        "confidence": None,
+        "confidence_pct": 0,
+        "technique": None,
+        "notes": ["pipeline_runner: scheduled hunt cycle triggered (no alert)"],
+        "escalate": False,
+        "triage_result": None,
+    }
+
+    try:
+        final_state: AgentState = hunt_pipeline.invoke(initial_state)
+    except Exception as exc:
+        _log(f"HUNT   ❌ scheduled hunt cycle raised: {exc}")
+        return
+
+    for note in final_state.get("notes", []):
+        _log(f"HUNT     {note}")
+
+    if final_state.get("escalate"):
+        _log("HUNT   ⚠️  one or more hunts escalated — TODO Phase 2: route to siem-review-queue / notify analyst")
+
+    _log("HUNT   scheduled hunt cycle complete")
+
+
+def start_hunt_scheduler() -> BackgroundScheduler:
+    """
+    Start the Day 26 proactive hunt scheduler in a background thread.
+    Runs every HUNT_INTERVAL_HOURS, completely independent of the alert
+    poll loop in main() below — it fires whether or not any alert has ever
+    reached the pipeline, which is what makes the hunting "proactive".
+    """
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(run_scheduled_hunts, "interval", hours=HUNT_INTERVAL_HOURS, id="hunt_scheduler")
+    scheduler.start()
+    _log(f"HUNT   scheduler started — running every {HUNT_INTERVAL_HOURS}h, independent of alert poll loop")
+    return scheduler
+
+
 def main(run_once: bool = False, since: str | None = None) -> None:
     if since is None:
         from datetime import timedelta
@@ -276,6 +354,13 @@ def main(run_once: bool = False, since: str | None = None) -> None:
 
     _log(f"pipeline_runner starting  |  poll_interval={POLL_INTERVAL}s  |  since={since}")
     _log(f"{'═' * 70}")
+
+    # ── Day 26 — start the proactive hunt scheduler ───────────────────────────
+    # Skipped in --once mode: that flag is for testing a single alert-poll
+    # cycle, not for standing up a background scheduler thread.
+    hunt_scheduler: BackgroundScheduler | None = None
+    if not run_once:
+        hunt_scheduler = start_hunt_scheduler()
 
     try:
         while True:
@@ -304,6 +389,10 @@ def main(run_once: bool = False, since: str | None = None) -> None:
     except KeyboardInterrupt:
         _log("\nINTERRUPT  Ctrl-C received — shutting down gracefully.")
         _write_trace(trace_lines)
+    finally:
+        if hunt_scheduler:
+            hunt_scheduler.shutdown(wait=False)
+            _log("HUNT   scheduler stopped")
 
 
 # ---------------------------------------------------------------------------
