@@ -1,0 +1,59 @@
+# Hunt 1 — Lateral Movement (SSH)
+# Day 27 — Cosmic Info Solutions SIEM, Ahmad Bussti
+
+hunt_name: lateral_movement_ssh
+
+hypothesis: >
+  An attacker pivoting laterally through the network will SSH into the same
+  destination host from several distinct source IPs within a short window —
+  a pattern that doesn't match normal single-admin login behavior.
+
+mitre_technique: T1021.004
+mitre_technique_name: "Remote Services: SSH"
+
+time_window_hours: 24
+finding_threshold: 3
+finding_threshold_description: >
+  3 or more distinct source IPs authenticating to the same destination host
+  within the time window.
+escalate_if_found: true
+
+index: "logs-wazuh.alerts-*"
+
+# elastic_query is templated: TIME_WINDOW_HOURS and FINDING_THRESHOLD are
+# substituted at run time from the fields above, so the threshold and lookback
+# window are defined once and can't drift out of sync with the query body.
+elastic_query:
+  size: 0
+  query:
+    bool:
+      filter:
+        - terms:
+            rule.groups: ["sshd", "authentication_success"]
+        - range:
+            "@timestamp":
+              gte: "now-TIME_WINDOW_HOURSh"
+  aggs:
+    hosts:
+      terms:
+        field: agent.name
+        size: 1000
+      aggs:
+        distinct_src_ips:
+          cardinality:
+            field: data.srcip
+        threshold_filter:
+          bucket_selector:
+            buckets_path:
+              distinctIps: distinct_src_ips
+            script: "params.distinctIps >= FINDING_THRESHOLD"
+
+# Each returned bucket = {"key": "<agent.name>", "doc_count": N,
+#   "distinct_src_ips": {"value": N}} and IS a finding — bucket_selector
+# already enforces the threshold server-side.
+
+notes: >
+  Verify that rule.groups:authentication_success in your data actually
+  represents successful SSH sessions and not some other auth path before
+  trusting results. If buckets look noisy, narrow the filter to
+  rule.id:5501 (PAM login session opened) instead of the broader group match.

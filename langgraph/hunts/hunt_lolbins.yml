@@ -1,0 +1,62 @@
+# Hunt 3 — Living off the Land (LOLBins)
+# Day 27 — Cosmic Info Solutions SIEM, Ahmad Bussti
+
+hunt_name: lolbins_execution
+
+hypothesis: >
+  An attacker living off the land will invoke a legitimate, pre-installed
+  system binary (certutil, bitsadmin, mshta, regsvr32) to download payloads,
+  bypass AV, or proxy-execute code — instead of dropping custom malware that
+  would be easier to flag.
+
+mitre_technique: T1218
+mitre_technique_name: "System Binary Proxy Execution"
+
+time_window_hours: 24
+finding_threshold: 1
+finding_threshold_description: >
+  Any single execution is worth a look — this is a high-fidelity,
+  low-volume hunt, unlike the statistical thresholds in Hunts 1-2.
+escalate_if_found: true
+
+index: "logs-wazuh.alerts-*"
+
+elastic_query:
+  size: 100
+  query:
+    bool:
+      filter:
+        - range:
+            "@timestamp":
+              gte: "now-TIME_WINDOW_HOURSh"
+      should:
+        - wildcard:
+            data.win.eventdata.image: "*certutil*"
+        - wildcard:
+            data.win.eventdata.image: "*bitsadmin*"
+        - wildcard:
+            data.win.eventdata.image: "*mshta*"
+        - wildcard:
+            data.win.eventdata.image: "*regsvr32*"
+        - wildcard:
+            data.command: "*certutil*"
+        - wildcard:
+            data.command: "*bitsadmin*"
+        - wildcard:
+            data.command: "*mshta*"
+        - wildcard:
+            data.command: "*regsvr32*"
+      minimum_should_match: 1
+
+environment_gap_warning: >
+  ENVIRONMENT MISMATCH — FLAGGED, NOT GUESSED AROUND. certutil, bitsadmin,
+  mshta, and regsvr32 are Windows binaries. project.md documents exactly one
+  Wazuh agent ("agent1"), which is Linux and collects only auth/PAM/firewall/
+  sudo events — no Sysmon, no process-execution auditing, no Windows host.
+  As written, this query matches the Day 27 spec exactly but will return
+  zero results on your current stack regardless of whether an attack
+  occurred, because the data source it depends on doesn't exist yet. Two
+  ways to close the gap: (a) add a Windows endpoint + Sysmon-for-Wazuh, or
+  (b) enable auditd `execve` logging on the Linux host and hunt Linux LOLBin
+  equivalents instead (curl|bash, base64 -d, python3 -c, perl -e, openssl).
+  A ready-to-swap Linux variant is included in the write-up if useful.

@@ -1,0 +1,72 @@
+# Hunt 2 — Data Exfiltration (Outbound Volume)
+# Day 27 — Cosmic Info Solutions SIEM, Ahmad Bussti
+
+hunt_name: data_exfiltration_volume
+
+hypothesis: >
+  A host being used to exfiltrate data will send an unusually large volume
+  of outbound bytes to an external (non-RFC1918) destination within a short
+  window, compared to its normal traffic pattern.
+
+mitre_technique: T1041
+mitre_technique_name: "Exfiltration Over C2 Channel"
+
+time_window_hours: 1
+finding_threshold: 524288000   # 500 MB in bytes (500 * 1024 * 1024)
+finding_threshold_description: >
+  More than 500MB (524,288,000 bytes) of outbound traffic from a single host
+  to an external IP within the time window.
+escalate_if_found: true
+
+index: "logs-wazuh.alerts-*"
+
+elastic_query:
+  size: 0
+  query:
+    bool:
+      filter:
+        - range:
+            "@timestamp":
+              gte: "now-TIME_WINDOW_HOURSh"
+      must_not:
+        # Excludes RFC1918 private ranges so only external destinations
+        # count toward the volume total. data.dstip is a `keyword` field
+        # (confirmed via _field_caps on Day 27), not `ip` — CIDR notation in
+        # a term query does NOT do range matching on keyword fields, it's a
+        # literal string equality check that silently matches nothing.
+        # regexp queries on the literal dotted-decimal string are the fix.
+        - regexp:
+            data.dstip: '10\..*'
+        - regexp:
+            data.dstip: '172\.(1[6-9]|2[0-9]|3[01])\..*'
+        - regexp:
+            data.dstip: '192\.168\..*'
+  aggs:
+    hosts:
+      terms:
+        field: agent.name
+        size: 1000
+      aggs:
+        total_bytes_out:
+          sum:
+            field: data.bytes_out
+        threshold_filter:
+          bucket_selector:
+            buckets_path:
+              bytesOut: total_bytes_out
+            script: "params.bytesOut > FINDING_THRESHOLD"
+
+data_gap_warning: >
+  CONFIRMED — NOT JUST ASSUMED (verified Day 27 via _field_caps and an
+  exists-count sweep across network.bytes, destination.bytes, source.bytes,
+  client.bytes, server.bytes, host.network.egress/ingress.bytes, and
+  data.bytes_out — every one returned 0 matching documents). No outbound
+  byte-volume field is populated anywhere in this index pattern. This is not
+  a query bug; the underlying data source (netflow, a firewall module with
+  byte counters, or similar) simply isn't feeding this pipeline yet. The
+  query above is correct and ready to use the moment such a field exists —
+  until then it will always return 0 findings, which is the expected,
+  correct result, not a false negative. Tracked as a Phase 2 backlog item.
+  (The CIDR exclusion below was fixed separately on Day 27 — data.dstip is
+  type `keyword`, not `ip`, so it now uses regexp matching instead of CIDR
+  term queries, which only work on the `ip` type.)

@@ -1,0 +1,79 @@
+# Hunt 2b — Data Exfiltration Proxy (Connection Count)
+# Day 27 — Cosmic Info Solutions SIEM, Ahmad Bussti
+#
+# INTERIM HUNT. Built because hunt_exfil.yml (byte-volume based) is confirmed
+# correct but will always return 0 until a netflow/firewall-with-bytes data
+# source is added (see data_gap_warning in that file). This proxy uses
+# something you already collect — firewall accept events — as a substitute
+# signal, and is explicitly a stand-in for Day 28's planned baseline work.
+
+hunt_name: data_exfiltration_volume_proxy
+
+hypothesis: >
+  Without byte-level netflow data, a sustained spike in outbound connections
+  from one host to external IPs can serve as a weak proxy for data
+  exfiltration or staging activity. This CANNOT distinguish one large
+  transfer from many small, unrelated ones — it is a coarse stand-in, not a
+  replacement for the byte-volume hunt once that data exists.
+
+mitre_technique: T1041
+mitre_technique_name: "Exfiltration Over C2 Channel"
+
+time_window_hours: 1
+finding_threshold: 50
+finding_threshold_description: >
+  PLACEHOLDER, not yet baseline-tuned. More than 50 outbound accept events
+  to external IPs from a single host within 1 hour. Day 28's planned
+  "average outbound connection count per host per hour" baseline
+  (siem-baselines index) should replace this fixed number with something
+  like "> 3x the host's normal hourly connection count" once it exists.
+escalate_if_found: false
+escalate_if_found_note: >
+  Deliberately set to false. This is an untuned proxy on a low-volume lab
+  environment — auto-escalating on a guessed threshold risks pure noise,
+  the same trap Day 26 avoided by removing the empty_query_smoke_test
+  playbook from DEFAULT_PLAYBOOKS. Treat findings as a watch list until
+  Day 28's baseline gives a real threshold, then flip this to true.
+
+index: "logs-wazuh.alerts-*"
+
+elastic_query:
+  size: 0
+  query:
+    bool:
+      filter:
+        - terms:
+            rule.groups: ["firewall"]
+        - term:
+            rule.id: "100001"   # Wazuh: Firewall packet accepted
+        - range:
+            "@timestamp":
+              gte: "now-TIME_WINDOW_HOURSh"
+      must_not:
+        # Same RFC1918 exclusion fix as hunt_exfil.yml — data.dstip is
+        # `keyword`, not `ip`, so regexp on the literal string, not CIDR term.
+        - regexp:
+            data.dstip: '10\..*'
+        - regexp:
+            data.dstip: '172\.(1[6-9]|2[0-9]|3[01])\..*'
+        - regexp:
+            data.dstip: '192\.168\..*'
+  aggs:
+    hosts:
+      terms:
+        field: agent.name
+        size: 1000
+      aggs:
+        threshold_filter:
+          bucket_selector:
+            # "_count" is the bucket's own doc_count — no separate metric
+            # agg needed since we're thresholding on raw connection count.
+            buckets_path:
+              count: _count
+            script: "params.count > FINDING_THRESHOLD"
+
+verify_before_trusting: >
+  Confirm rule.id "100001" actually means "accept" (not "drop") in your data
+  — cross-check against rule.description text for a sample doc — before
+  relying on this hunt; project.md lists 100001 as accept and 100002 as
+  drop, but worth a spot-check since this hunt's entire logic depends on it.
