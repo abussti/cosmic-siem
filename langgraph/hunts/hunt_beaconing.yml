@@ -1,0 +1,66 @@
+hunt_name: beaconing_c2_pattern
+hypothesis: >
+  Malware checking in with a C2 server produces outbound connections to the
+  same external IP at a near-constant interval — 60±10s is the most common
+  "lazy" beacon timer in commodity malware. Genuine human or application
+  traffic to the same peer is rarely this regular over a multi-hour window,
+  so a tight, sustained interval is the signal here, not raw volume.
+  Day 28 field check: data.dstip does not exist in this dataset — firewall
+  alerts only carry data.srcip + data.dstuser. Reframed as (agent.name, data.srcip)
+  pairs — i.e. "this monitored host talking to this IP at a steady cadence" —
+  matching the same field pattern Hunt 1 (lateral movement) already uses.
+mitre_technique: T1071
+time_window_hours: 6
+finding_threshold: 20
+escalate_if_found: true
+index: "logs-wazuh.alerts-*"
+baseline_check:
+  enabled: true
+  baseline_type: outbound_conn_per_hour
+  entity_field: host
+  multiplier: 3
+elastic_query:
+  size: 0
+  query:
+    bool:
+      must:
+        - term: { "rule.groups": "firewall" }
+        - range:
+            "@timestamp":
+              gte: "now-TIME_WINDOW_HOURSh"
+  aggs:
+    by_host_peer_pair:
+      composite:
+        size: 1000
+        sources:
+          - host: { terms: { field: "agent.name" } }
+          - peer_ip: { terms: { field: "data.srcip" } }
+      aggs:
+        conn_count:
+          value_count: { field: "@timestamp" }
+        first_seen:
+          min: { field: "@timestamp" }
+        last_seen:
+          max: { field: "@timestamp" }
+        avg_interval:
+          # Day 28 fix: the original version divided the whole lookback
+          # window by the event count, which only works if the beacon fills
+          # the entire window from its start. Real beacons rarely do —
+          # measure the actual span between first and last event in this
+          # bucket instead, divided by (count - 1) intervals. count==1 is
+          # guarded to avoid a divide-by-zero (and obviously isn't a beacon).
+          bucket_script:
+            buckets_path:
+              count: "conn_count"
+              first: "first_seen"
+              last: "last_seen"
+            script: >
+              params.count > 1
+                ? (params.last - params.first) / 1000.0 / (params.count - 1)
+                : 999999
+        beacon_filter:
+          bucket_selector:
+            buckets_path:
+              avg_interval: "avg_interval"
+              count: "conn_count"
+            script: "params.avg_interval >= 50 && params.avg_interval <= 70 && params.count >= FINDING_THRESHOLD"

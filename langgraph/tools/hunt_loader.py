@@ -1,5 +1,5 @@
 """
-tools/hunt_loader.py — Day 27
+tools/hunt_loader.py — Day 27, updated Day 28
 
 Loads YAML-defined hunt playbooks from /langgraph/hunts/ and runs them against
 Elasticsearch, reusing the same _post() helper convention every other file in
@@ -15,13 +15,21 @@ loader handles both shapes generically: aggregation buckets when present
 Placeholders substituted into elastic_query at run time from the top-level YAML
 fields, so the threshold and lookback window are defined ONCE and can't drift
 out of sync with the query body:
-    TIME_WINDOW_HOURS  -> str(time_window_hours)
-    FINDING_THRESHOLD  -> str(finding_threshold)
+    TIME_WINDOW_HOURS   -> str(time_window_hours)
+    TIME_WINDOW_SECONDS -> str(time_window_hours * 3600)   [Day 28 — needed by
+                            hunt_beaconing.yml's bucket_script interval math]
+    FINDING_THRESHOLD   -> str(finding_threshold)
 
 Output contract matches Day 26's hunting_agent.py exactly, plus extra metadata
 (hypothesis, mitre_technique) carried through for Day 29's Claude-summary step:
     {threats_found, findings, hunt_summary, escalate, hunt_name,
      mitre_technique, hypothesis}
+
+Day 28 addition: optional `baseline_check` block in a playbook's YAML. When
+present, each aggregation finding is enriched (not filtered — escalate/
+threats_found are untouched) with is_anomaly / baseline_ratio by comparing
+against the entity's stored baseline in siem-baselines (tools/baseline_builder.py).
+Missing baseline -> finding is tagged "no_baseline_yet", never crashes.
 """
 import glob
 import json
@@ -30,6 +38,7 @@ import os
 import yaml
 
 from tools.elastic_tools import _post
+from tools.baseline_builder import get_baseline
 
 HUNTS_DIR = os.path.join(os.path.dirname(__file__), "..", "hunts")
 
@@ -56,11 +65,43 @@ def load_hunt_playbooks(directory: str = HUNTS_DIR) -> list[dict]:
 
 
 def _render_query(playbook: dict) -> dict:
-    """Substitute TIME_WINDOW_HOURS / FINDING_THRESHOLD placeholders."""
+    """Substitute TIME_WINDOW_HOURS / TIME_WINDOW_SECONDS / FINDING_THRESHOLD
+    placeholders."""
     raw = json.dumps(playbook["elastic_query"])
-    raw = raw.replace("TIME_WINDOW_HOURS", str(playbook["time_window_hours"]))
+    window_hours = playbook["time_window_hours"]
+    raw = raw.replace("TIME_WINDOW_SECONDS", str(int(window_hours * 3600)))  # Day 28
+    raw = raw.replace("TIME_WINDOW_HOURS", str(window_hours))
     raw = raw.replace("FINDING_THRESHOLD", str(playbook["finding_threshold"]))
     return json.loads(raw)
+
+
+def _apply_baseline_check(playbook: dict, findings: list, window_hours: float) -> list:
+    """Day 28 — when a baseline_check block is present, tag each finding with
+    is_anomaly / baseline_ratio so the Day 29 Claude-summary step has context.
+    Purely additive: never changes threats_found or escalate, never raises."""
+    bc = playbook.get("baseline_check")
+    if not bc or not bc.get("enabled"):
+        return findings
+
+    baseline_type = bc["baseline_type"]
+    entity_field = bc.get("entity_field", "src_ip")
+    multiplier = bc.get("multiplier", 3)
+
+    for finding in findings:
+        entity = finding.get("key", {}).get(entity_field)
+        if entity is None:
+            continue
+        baseline = get_baseline(baseline_type, entity)
+        if not baseline:
+            finding["baseline_status"] = "no_baseline_yet"
+            continue
+        actual_rate = finding.get("doc_count", 0) / max(window_hours, 1)
+        avg = baseline.get("avg_count") or 0
+        ratio = (actual_rate / avg) if avg else float("inf")
+        finding["baseline_avg"] = avg
+        finding["baseline_ratio"] = round(ratio, 2)
+        finding["is_anomaly"] = ratio > multiplier
+    return findings
 
 
 def run_yaml_hunt(playbook: dict) -> dict:
@@ -87,15 +128,17 @@ def run_yaml_hunt(playbook: dict) -> dict:
 
     aggs = resp.get("aggregations")
     if aggs:
-        # Aggregation-based hunt (lateral movement, exfil volume). The
-        # bucket_selector in the query already enforced the threshold
+        # Aggregation-based hunt (lateral movement, exfil volume, beaconing).
+        # The bucket_selector in the query already enforced the threshold
         # server-side, so every returned bucket IS a finding.
         agg_name = next(iter(aggs))
         findings = aggs[agg_name].get("buckets", [])
+        findings = _apply_baseline_check(playbook, findings, window)  # Day 28
         threats_found = len(findings)
         meets_threshold = threats_found >= 1
     else:
-        # Hit-based hunt (LOLBins) — count hits and compare to threshold here.
+        # Hit-based hunt (LOLBins, persistence) — count hits and compare to
+        # threshold here.
         findings = resp.get("hits", {}).get("hits", [])
         threats_found = len(findings)
         meets_threshold = threats_found >= threshold
