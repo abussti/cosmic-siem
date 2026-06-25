@@ -292,7 +292,57 @@ def write_triage_result_to_es(
         print(f"[ES WRITE-BACK] ❌ Exception: {exc}")
         return False
  
- 
+
+
+# ---------------------------------------------------------------------------
+# NEW FUNCTIONS — Day 29: hunt result storage (siem-hunt-results)
+# ---------------------------------------------------------------------------
+# Same _post() convention as every other write/read in this file — no new
+# client, no new auth pattern.
+
+HUNT_RESULTS_INDEX = "siem-hunt-results"
+
+
+def write_hunt_result_to_es(hunt_name, findings_count, summary, escalated):
+    """
+    Writes one hunt-cycle result to siem-hunt-results.
+
+    Fields (per Day 29 spec): hunt_name, findings_count, summary, escalated, timestamp.
+
+    Never raises — an ES write failure here must not crash the hunt cycle that's
+    calling it (same defensive philosophy as run_hunt(): a storage hiccup shouldn't
+    take down detection).
+    """
+    doc = {
+        "hunt_name": hunt_name,
+        "findings_count": findings_count,
+        "summary": summary,
+        "escalated": bool(escalated),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        return _post(f"{HUNT_RESULTS_INDEX}/_doc", doc)
+    except Exception as e:
+        print(f"[write_hunt_result_to_es] ES write failed: {e}")
+        return None
+
+
+def get_recent_hunt_results(size=20):
+    """
+    Optional helper (not in the Day 29 spec, but handy for Day 30's full test /
+    Week 6 review) — latest hunt-cycle results, newest first.
+    """
+    body = {
+        "size": size,
+        "sort": [{"timestamp": "desc"}],
+    }
+    try:
+        return _post(f"{HUNT_RESULTS_INDEX}/_search", body)
+    except Exception as e:
+        print(f"[get_recent_hunt_results] ES read failed: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # NEW FUNCTION 2 — poll for unprocessed alerts (used by pipeline_runner.py)
 # ---------------------------------------------------------------------------
@@ -344,33 +394,6 @@ def get_unprocessed_alerts(since_timestamp: str, size: int = 50) -> list[dict]:
         print(f"[ES POLL] ❌ Exception: {exc}")
         return []
 
-
-# ── quick CLI test ─────────────────────────────────────────────────────────────
-
-if __name__ == "__main__":
-    print("=== Cluster health ===")
-    print(json.dumps(es_health(), indent=2))
-
-    print("\n=== Last 3 alerts ===")
-    for evt in get_recent_alerts(3):
-        rule = evt.get('rule', {})
-        print(f"  [{evt.get('@timestamp','')}] rule {rule.get('id','?')} "
-              f"lv={rule.get('level','?')} — {rule.get('description','')[:60]}")
-
-    print("\n=== get_recent_events('192.168.1.10', minutes=120) ===")
-    evts = get_recent_events("192.168.1.10", minutes=120)
-    print(f"  Found {len(evts)} events")
-    for e in evts[:3]:
-        rule = e.get('rule', {})
-        print(f"  {e.get('@timestamp','')} | rule {rule.get('id','?')} "
-              f"| {rule.get('description','')[:50]}")
-
-    print("\n=== get_user_login_history('root', days=7) ===")
-    logins = get_user_login_history("root", days=7)
-    print(f"  Found {len(logins)} login events")
-    for l in logins[:3]:
-        print(f"  {l.get('@timestamp','')} | groups={l.get('rule',{}).get('groups',[])} "
-              f"| from {l.get('data',{}).get('srcip','?')}")
 
 def get_ip_seen_before(src_ip: str, lookback_days: int = 30) -> bool:
     """
@@ -649,3 +672,45 @@ def get_ioc_history(ioc_value: str) -> dict:
         "match_count": match_count,
         "alerts": alerts,
     }
+
+
+# ── quick CLI test ─────────────────────────────────────────────────────────────
+# (Moved here from mid-file — was previously sitting between get_user_login_history
+# and get_ip_seen_before, which meant later functions only existed below an
+# if __name__ block. Harmless in practice since module-level defs run regardless,
+# but confusing to read. Belongs at the true end of the file like every other
+# module's __main__ block in this project.)
+
+if __name__ == "__main__":
+    print("=== Cluster health ===")
+    print(json.dumps(es_health(), indent=2))
+
+    print("\n=== Last 3 alerts ===")
+    for evt in get_recent_alerts(3):
+        rule = evt.get('rule', {})
+        print(f"  [{evt.get('@timestamp','')}] rule {rule.get('id','?')} "
+              f"lv={rule.get('level','?')} — {rule.get('description','')[:60]}")
+
+    print("\n=== get_recent_events('192.168.1.10', minutes=120) ===")
+    evts = get_recent_events("192.168.1.10", minutes=120)
+    print(f"  Found {len(evts)} events")
+    for e in evts[:3]:
+        rule = e.get('rule', {})
+        print(f"  {e.get('@timestamp','')} | rule {rule.get('id','?')} "
+              f"| {rule.get('description','')[:50]}")
+
+    print("\n=== get_user_login_history('root', days=7) ===")
+    logins = get_user_login_history("root", days=7)
+    print(f"  Found {len(logins)} login events")
+    for l in logins[:3]:
+        print(f"  {l.get('@timestamp','')} | groups={l.get('rule',{}).get('groups',[])} "
+              f"| from {l.get('data',{}).get('srcip','?')}")
+
+    print("\n=== get_recent_hunt_results(5)  [Day 29] ===")
+    hunt_results = get_recent_hunt_results(5)
+    hits = (hunt_results or {}).get("hits", {}).get("hits", [])
+    print(f"  Found {len(hits)} hunt result(s)")
+    for h in hits[:5]:
+        src = h.get("_source", {})
+        print(f"  {src.get('timestamp','')} | {src.get('hunt_name','?')} "
+              f"| findings={src.get('findings_count','?')} escalated={src.get('escalated','?')}")
