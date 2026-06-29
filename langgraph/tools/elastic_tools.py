@@ -344,6 +344,80 @@ def get_recent_hunt_results(size=20):
 
 
 # ---------------------------------------------------------------------------
+# NEW FUNCTIONS — Day 31: response agent logging (siem-response-log)
+# ---------------------------------------------------------------------------
+# Same _post() convention as everything else in this file. Called by
+# agents/response_agent.py's response_node() on every decision — including
+# the "no action taken" case — so the audit trail is complete from the
+# scaffold stage onward (same "log every cycle" philosophy as Day 29's
+# write_hunt_result_to_es above).
+
+RESPONSE_LOG_INDEX = "siem-response-log"
+
+
+def write_response_log_entry(action_type, target, agent, reversible,
+                              reversed_=False, verdict=None, confidence=None):
+    """
+    Writes one entry to siem-response-log.
+
+    Fields (per Day 31 spec): timestamp, action_type, target, agent,
+    reversible, reversed. verdict/confidence are extra context, included
+    the same way write_triage_result_to_es carries extra context fields
+    beyond the bare minimum.
+
+    action_type   str   e.g. "block_ip", "isolate_endpoint", "create_ticket",
+                         or "none" if no action was warranted this cycle
+    target        str   the IP / agent name / username the action targets
+    agent         str   which agent made the decision (currently always
+                         "response_agent")
+    reversible    bool  whether this action type can be undone
+    reversed_     bool  whether it HAS been undone — trailing underscore
+                         avoids shadowing the reversed() builtin, same
+                         defensive naming habit the Day 24 NameError fix
+                         on coordination_agent.py established
+    verdict       str | None   the triage verdict that triggered this
+    confidence    int | None   confidence_pct at decision time
+
+    Never raises — mirrors every other write_* function in this file.
+    """
+    doc = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action_type": action_type,
+        "target": target,
+        "agent": agent,
+        "reversible": reversible,
+        "reversed": reversed_,
+    }
+    if verdict is not None:
+        doc["verdict"] = verdict
+    if confidence is not None:
+        doc["confidence"] = confidence
+
+    try:
+        return _post(f"{RESPONSE_LOG_INDEX}/_doc", doc)
+    except Exception as e:
+        print(f"[write_response_log_entry] ES write failed: {e}")
+        return None
+
+
+def get_recent_response_actions(size=20):
+    """
+    Optional helper (not in the Day 31 spec, but matches get_recent_hunt_results
+    above, and feeds the Week 8 SOC dashboard's response-actions panel later) —
+    latest response-log entries, newest first.
+    """
+    body = {
+        "size": size,
+        "sort": [{"timestamp": "desc"}],
+    }
+    try:
+        return _post(f"{RESPONSE_LOG_INDEX}/_search", body)
+    except Exception as e:
+        print(f"[get_recent_response_actions] ES read failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
 # NEW FUNCTION 2 — poll for unprocessed alerts (used by pipeline_runner.py)
 # ---------------------------------------------------------------------------
  
@@ -714,3 +788,12 @@ if __name__ == "__main__":
         src = h.get("_source", {})
         print(f"  {src.get('timestamp','')} | {src.get('hunt_name','?')} "
               f"| findings={src.get('findings_count','?')} escalated={src.get('escalated','?')}")
+
+    print("\n=== get_recent_response_actions(5)  [Day 31] ===")
+    response_results = get_recent_response_actions(5)
+    resp_hits = (response_results or {}).get("hits", {}).get("hits", [])
+    print(f"  Found {len(resp_hits)} response log entry(ies)")
+    for h in resp_hits[:5]:
+        src = h.get("_source", {})
+        print(f"  {src.get('timestamp','')} | action={src.get('action_type','?')} "
+              f"| target={src.get('target','?')} | verdict={src.get('verdict','?')}")
