@@ -4,11 +4,29 @@ tools/response_tools.py
 Day 32 — Response / Wazuh
 Action 1: IP blocking via Wazuh active-response.
 
+Day 33 — Response / Wazuh
+Action 2: Endpoint isolation via Wazuh active-response.
+
+Day 34 — Response / Tickets
+Action 3: automatic ticket creation in GitHub Issues for every confirmed
+threat that requires analyst review.
+
 Note: firewall-drop is already a stock <command> in this environment's
 ossec.conf (verified via `docker exec ... grep -A3 "<command>"`), so no
 ossec.conf edit was needed. It's invoked directly via the API using the
 "!command_name" syntax, which calls a registered <command> without
 requiring an <active-response> auto-trigger binding block.
+
+isolate-host is a NEW custom <command> (not stock) that has to be deployed
+to each agent and registered on the manager the same way — see
+isolate-host.sh and the ossec.conf snippet in the Day 33 notes. It follows
+the same "!command_name" invocation convention as firewall-drop so it slots
+into _send_active_response() with zero changes to that helper.
+
+create_ticket() (Day 34) is unrelated to the Wazuh active-response path
+above — it's a plain REST call to the GitHub Issues API — but lives in this
+file per the Day 34 plan, and reuses the same never-raises /
+log-every-attempt conventions as block_ip()/isolate_endpoint().
 
 Mirrors the conventions already used in tools/elastic_tools.py:
   - thin `requests`-based helpers, no SDK client object
@@ -16,12 +34,16 @@ Mirrors the conventions already used in tools/elastic_tools.py:
     structured result dict, same pattern as run_hunt() / get_*() calls
   - all writes go through a small `_post`-style helper
 
-Two public functions:
-    block_ip(ip_address, endpoint)    -> dict
-    unblock_ip(ip_address, endpoint)  -> dict
+Five public functions:
+    block_ip(ip_address, endpoint)         -> dict   (Day 32)
+    unblock_ip(ip_address, endpoint)       -> dict   (Day 32)
+    isolate_endpoint(agent_id, endpoint)   -> dict   (Day 33)
+    unisolate_endpoint(agent_id, endpoint) -> dict   (Day 33)
+    create_ticket(alert, triage_summary,
+                   confidence, technique)  -> dict   (Day 34)
 
-Both log every call to siem-response-log (Step 5) regardless of success
-or failure, so the audit trail is complete even on API errors.
+All five log every call to siem-response-log regardless of success or
+failure, so the audit trail is complete even on API errors.
 """
 
 import os
@@ -47,6 +69,31 @@ RESPONSE_LOG_INDEX = "siem-response-log"
 # registered <command> through the API without requiring an
 # <active-response> auto-trigger block.
 FIREWALL_DROP_COMMAND = "!firewall-drop"
+
+# Day 33 — custom <command>, registered on the manager the same way
+# firewall-drop already is, but the script itself and the ossec.conf
+# <command> block had to be added by hand (not stock). Same "!" invocation
+# convention, so _send_active_response() needs no changes to support it.
+ISOLATE_HOST_COMMAND = "!isolate-host"
+
+# The Wazuh manager's own IP, allow-listed by isolate-host.sh so the agent
+# keeps sending heartbeats/alerts to the manager while everything else is
+# dropped. Set this to your real manager IP before running isolate_endpoint().
+MANAGER_IP = os.environ.get("MANAGER_IP", "192.168.56.10")
+
+# ── Config — Day 34: GitHub Issues ──────────────────────────────────────────
+GITHUB_API_URL = "https://api.github.com"
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
+GITHUB_REPO_OWNER = os.environ.get("GITHUB_REPO_OWNER")
+GITHUB_REPO_NAME = os.environ.get("GITHUB_REPO_NAME")
+
+# Confidence cutoffs used to label ticket severity. Chosen to line up with
+# the tiers already in use elsewhere in the project: RESPONSE_CONFIDENCE_THRESHOLD
+# (response_agent.py, Day 31) sits at 80 for "high", and coordination_agent.py's
+# analyst-review band is 40-70, so "medium" starts at 50 as a middle ground
+# between those two existing cutoffs. Adjust if you want it to match one exactly.
+TICKET_SEVERITY_HIGH_THRESHOLD = 80
+TICKET_SEVERITY_MEDIUM_THRESHOLD = 50
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────
@@ -167,13 +214,17 @@ def _post(path, body):
 
 
 def _log_response_action(action_type, target, endpoint, reversible, success, detail):
-    """Step 5 — writes every block/unblock attempt to siem-response-log,
-    success or failure, so the audit trail is always complete."""
+    """Writes every response action attempt to siem-response-log, success or
+    failure, so the audit trail is always complete.
+    action_type: "block_ip" | "unblock_ip" | "isolate_endpoint" |
+                 "unisolate_endpoint" | "create_ticket"
+    """
     doc = {
-        "action_type": action_type,      # "block_ip" | "unblock_ip"
-        "target": target,                # the IP address acted on
-        "endpoint": endpoint,            # Wazuh agent name/id affected
-        "reversible": reversible,        # True for block_ip
+        "action_type": action_type,
+        "target": target,                # IP for block/unblock, agent id/name for isolate/unisolate,
+                                          # GitHub issue URL for create_ticket
+        "endpoint": endpoint,            # Wazuh agent name/id, SSH host, or triggering agent.name
+        "reversible": reversible,        # True for block_ip / isolate_endpoint
         "success": success,
         "detail": str(detail)[:2000],    # truncate to keep doc size sane
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
@@ -182,7 +233,7 @@ def _log_response_action(action_type, target, endpoint, reversible, success, det
     return doc
 
 
-# ── Public functions ─────────────────────────────────────────────────────────
+# ── Public functions — Day 32: IP blocking ──────────────────────────────────
 
 def block_ip(ip_address, endpoint):
     """
@@ -312,25 +363,357 @@ def unblock_ip(ip_address, endpoint, ssh_user=None, ssh_key_path=None):
     }
 
 
-# ── Step 6 — standalone smoke test ──────────────────────────────────────────
+# ── Public functions — Day 33: Endpoint isolation ───────────────────────────
+
+def isolate_endpoint(agent_id, endpoint, manager_ip=None):
+    """
+    Isolate a compromised endpoint from the network via active-response
+    (isolate-host — see isolate-host.sh), while keeping the Wazuh agent's
+    connection to the manager alive so heartbeats/alerts keep flowing for
+    forensics.
+
+    Uses the same "!command_name" API invocation as block_ip() — isolate-host
+    is a custom <command> deployed to the agent and registered on the manager
+    the same way firewall-drop already is (see isolate-host.sh header for the
+    ossec.conf snippet), so _send_active_response() needs no changes.
+
+    The manager's IP is passed as an argument so the script can allow-list
+    manager traffic specifically before dropping everything else — this is
+    what keeps the agent "active" in Wazuh's eyes during isolation, unlike a
+    blanket DROP that would also sever the agent<->manager channel.
+
+    Args:
+        agent_id:   str — Wazuh agent id or name to isolate (API path)
+        endpoint:   str — same identifier, kept as a separate arg to match
+                    block_ip()'s (target, endpoint) shape for logging
+        manager_ip: str | None — defaults to MANAGER_IP env var
+
+    Returns dict with success/action_type/target/endpoint/reversible/detail.
+    Never raises.
+    """
+    manager_ip = manager_ip or MANAGER_IP
+
+    success, detail = _send_active_response(
+        agent_id=endpoint,
+        command=ISOLATE_HOST_COMMAND,
+        arguments=[manager_ip],
+        alert_context={"data": {"reason": "siem_response_agent_isolate", "agent": agent_id}},
+    )
+
+    _log_response_action(
+        action_type="isolate_endpoint",
+        target=agent_id,
+        endpoint=endpoint,
+        reversible=True,
+        success=success,
+        detail=detail,
+    )
+
+    return {
+        "success": success,
+        "action_type": "isolate_endpoint",
+        "target": agent_id,
+        "endpoint": endpoint,
+        "reversible": True,
+        "detail": detail,
+    }
+
+
+def unisolate_endpoint(agent_id, endpoint, ssh_user=None, ssh_key_path=None):
+    """
+    Reverse a previously applied isolate-host isolation on a given endpoint.
+
+    PLATFORM LIMITATION — same one Day 32 found and confirmed against
+    wazuh/wazuh#12342: the Wazuh API's PUT /active-response always triggers
+    a registered <command>'s "add" path; there is no API-level way to
+    request "delete" on a stateful custom script, even one we wrote
+    ourselves (the limitation is in the API, not the script). So, exactly
+    like unblock_ip(), this bypasses the API and invokes isolate-host
+    directly on the agent over SSH with a "delete" JSON payload matching
+    the script's documented STDIN contract.
+
+    Args:
+        agent_id:     str — Wazuh agent id or name (kept for logging /
+                      symmetry with isolate_endpoint's signature)
+        endpoint:     str — an SSH-reachable hostname or IP for the agent
+                      (NOT the Wazuh agent ID/name — same asymmetry
+                      unblock_ip() already has vs. block_ip())
+        ssh_user:     str | None — defaults to RESPONSE_SSH_USER env var
+        ssh_key_path: str | None — defaults to RESPONSE_SSH_KEY env var
+
+    Returns same shape as isolate_endpoint(), with action_type="unisolate_endpoint".
+    Never raises.
+    """
+    import subprocess
+
+    ssh_user = ssh_user or os.environ.get("RESPONSE_SSH_USER", "wazuh-manager")
+    ssh_key_path = ssh_key_path or os.environ.get("RESPONSE_SSH_KEY", "~/.ssh/id_rsa")
+
+    delete_payload = json.dumps({
+        "version": 1,
+        "origin": {"name": "response_tools", "module": "wazuh-execd"},
+        "command": "delete",
+        "parameters": {
+            "extra_args": [],
+            "alert": {"data": {"reason": "siem_response_agent_unisolate", "agent": agent_id}},
+        },
+    })
+
+    remote_cmd = f"echo '{delete_payload}' | sudo /var/ossec/active-response/bin/isolate-host"
+
+    ssh_cmd = [
+        "ssh",
+        "-i", os.path.expanduser(ssh_key_path),
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ConnectTimeout=10",
+        f"{ssh_user}@{endpoint}",
+        remote_cmd,
+    ]
+
+    try:
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=20)
+        success = result.returncode == 0
+        detail = {
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+        }
+    except Exception as e:
+        success = False
+        detail = str(e)
+
+    _log_response_action(
+        action_type="unisolate_endpoint",
+        target=agent_id,
+        endpoint=endpoint,
+        reversible=None,
+        success=success,
+        detail=detail,
+    )
+
+    return {
+        "success": success,
+        "action_type": "unisolate_endpoint",
+        "target": agent_id,
+        "endpoint": endpoint,
+        "reversible": None,
+        "detail": detail,
+    }
+
+
+# ── Public functions — Day 34: Ticket creation (GitHub Issues) ─────────────
+
+def _severity_from_confidence(confidence):
+    """Maps a numeric confidence_pct (0-100) to a severity label — see
+    TICKET_SEVERITY_*_THRESHOLD comments above for how the cutoffs were
+    chosen."""
+    if confidence is None:
+        return "low"
+    if confidence > TICKET_SEVERITY_HIGH_THRESHOLD:
+        return "high"
+    if confidence >= TICKET_SEVERITY_MEDIUM_THRESHOLD:
+        return "medium"
+    return "low"
+
+
+def _github_headers():
+    return {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def create_ticket(alert, triage_summary, confidence, technique=None):
+    """
+    Create a GitHub Issue for a confirmed threat that requires analyst review.
+
+    Not a Wazuh active-response action like block_ip()/isolate_endpoint()
+    above — this is a plain REST call to the GitHub Issues API — but follows
+    the same conventions: never raises, logs every attempt (success or
+    failure) to siem-response-log via _log_response_action(), and returns a
+    structured result dict of the same shape.
+
+    Args:
+        alert: dict — raw Wazuh alert (or ES search hit). Reads
+            rule.description, @timestamp, agent.name, data.srcip.
+            If alert["_id"] and alert["_index"] are present (the ES hit
+            fields, as returned by get_unprocessed_alerts()), the created
+            ticket's URL is also written back onto that alert document via
+            elastic_tools.update_alert_with_ticket_url(). AgentState's
+            alert_es_id/alert_es_index are accepted as a fallback if _id/
+            _index aren't present.
+        triage_summary: str — the triage agent's summary/evidence text
+        confidence: int (0-100) — confidence_pct at decision time
+        technique: str | None — MITRE ATT&CK ID, e.g. "T1110"
+
+    Returns:
+        dict — success / action_type="create_ticket" / target (issue html_url,
+        or None on failure) / endpoint (triggering agent.name) /
+        reversible=False / detail (issue_number+labels on success, error
+        string on failure).
+
+    Never raises.
+    """
+    rule = alert.get("rule", {}) or {}
+    rule_desc = rule.get("description", "Unknown alert")
+    timestamp = alert.get("@timestamp", datetime.datetime.utcnow().isoformat() + "Z")
+    src_ip = (alert.get("data", {}) or {}).get("srcip", "unknown")
+    agent_name = (alert.get("agent", {}) or {}).get("name", "unknown")
+    severity = _severity_from_confidence(confidence)
+
+    if not GITHUB_TOKEN or not GITHUB_REPO_OWNER or not GITHUB_REPO_NAME:
+        detail = "GITHUB_TOKEN / GITHUB_REPO_OWNER / GITHUB_REPO_NAME not configured"
+        _log_response_action(
+            action_type="create_ticket",
+            target=None,
+            endpoint=agent_name,
+            reversible=False,
+            success=False,
+            detail=detail,
+        )
+        return {
+            "success": False,
+            "action_type": "create_ticket",
+            "target": None,
+            "endpoint": agent_name,
+            "reversible": False,
+            "detail": detail,
+        }
+
+    title = f"[SIEM ALERT] {rule_desc} — {timestamp}"
+    body = (
+        f"**Severity:** {severity}\n"
+        f"**Confidence:** {confidence}%\n"
+        f"**MITRE ATT&CK Technique:** {technique or 'Not identified'}\n"
+        f"**Source IP:** {src_ip}\n"
+        f"**Agent:** {agent_name}\n\n"
+        f"### Triage Summary\n{triage_summary}\n\n"
+        f"### Recommended Actions\n"
+        f"- Review the alert and triage summary above\n"
+        f"- Confirm or dismiss via the SOC dashboard\n"
+        f"- Escalate to response agent (block_ip / isolate_endpoint) if confirmed malicious\n"
+    )
+
+    labels = [f"severity-{severity}", "needs-analyst-review", "auto-generated"]
+    payload = {"title": title, "body": body, "labels": labels}
+    url = f"{GITHUB_API_URL}/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/issues"
+
+    try:
+        resp = requests.post(url, headers=_github_headers(), data=json.dumps(payload), timeout=15)
+        resp.raise_for_status()
+        issue = resp.json()
+        success = True
+        ticket_url = issue.get("html_url")
+        detail = {"issue_number": issue.get("number"), "labels": labels}
+    except requests.exceptions.HTTPError as e:
+        try:
+            err_body = resp.json()
+        except Exception:
+            err_body = resp.text
+        success = False
+        ticket_url = None
+        detail = f"{e} | response_body={err_body}"
+    except Exception as e:
+        success = False
+        ticket_url = None
+        detail = str(e)
+
+    _log_response_action(
+        action_type="create_ticket",
+        target=ticket_url,
+        endpoint=agent_name,
+        reversible=False,
+        success=success,
+        detail=detail,
+    )
+
+    if success:
+        es_id = alert.get("_id") or alert.get("alert_es_id")
+        es_index = alert.get("_index") or alert.get("alert_es_index")
+        if es_id and es_index:
+            try:
+                from tools.elastic_tools import update_alert_with_ticket_url
+                update_alert_with_ticket_url(es_index, es_id, ticket_url)
+            except Exception as e:
+                print(f"[create_ticket] failed to write ticket_url back to alert doc: {e}")
+
+    return {
+        "success": success,
+        "action_type": "create_ticket",
+        "target": ticket_url,
+        "endpoint": agent_name,
+        "reversible": False,
+        "detail": detail,
+    }
+
+
+# ── Standalone smoke test ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     TEST_IP = os.environ.get("TEST_IP", "203.0.113.250")
-    TEST_AGENT = os.environ.get("TEST_AGENT", "agent1")          # Wazuh agent name (for block_ip, via API)
-    TEST_SSH_HOST = os.environ.get("TEST_SSH_HOST", TEST_AGENT)  # SSH-reachable host/IP (for unblock_ip)
+    TEST_AGENT = os.environ.get("TEST_AGENT", "agent1")          # Wazuh agent name (API path)
+    TEST_SSH_HOST = os.environ.get("TEST_SSH_HOST", TEST_AGENT)  # SSH-reachable host/IP
 
-    print(f"[test] Blocking {TEST_IP} on {TEST_AGENT} (via Wazuh API)...")
-    block_result = block_ip(TEST_IP, TEST_AGENT)
-    print(json.dumps(block_result, indent=2, default=str))
+    RUN_DAY32 = os.environ.get("RUN_DAY32", "1") == "1"
+    RUN_DAY33 = os.environ.get("RUN_DAY33", "1") == "1"
+    RUN_DAY34 = os.environ.get("RUN_DAY34", "1") == "1"
 
-    print(f"\n[test] On the agent host, verify: sudo iptables -L -n | grep {TEST_IP}")
-    input("Press Enter once you've confirmed the DROP rule exists...")
+    if RUN_DAY32:
+        print(f"[test] Blocking {TEST_IP} on {TEST_AGENT} (via Wazuh API)...")
+        block_result = block_ip(TEST_IP, TEST_AGENT)
+        print(json.dumps(block_result, indent=2, default=str))
 
-    print(f"\n[test] Unblocking {TEST_IP} on {TEST_SSH_HOST} (via direct SSH script call)...")
-    unblock_result = unblock_ip(TEST_IP, TEST_SSH_HOST)
-    print(json.dumps(unblock_result, indent=2, default=str))
+        print(f"\n[test] On the agent host, verify: sudo iptables -L -n | grep {TEST_IP}")
+        input("Press Enter once you've confirmed the DROP rule exists...")
 
-    print(f"\n[test] Verify removal: sudo iptables -L -n | grep {TEST_IP}  (should return nothing)")
-    print("[test] NOTE: if duplicate DROP rules exist from earlier testing, you may need to")
-    print("       run unblock_ip() multiple times, or manually clear remaining rules first:")
-    print(f"       sudo iptables -L INPUT -n --line-numbers | grep {TEST_IP}")
+        print(f"\n[test] Unblocking {TEST_IP} on {TEST_SSH_HOST} (via direct SSH script call)...")
+        unblock_result = unblock_ip(TEST_IP, TEST_SSH_HOST)
+        print(json.dumps(unblock_result, indent=2, default=str))
+
+        print(f"\n[test] Verify removal: sudo iptables -L -n | grep {TEST_IP}  (should return nothing)")
+        print("[test] NOTE: if duplicate DROP rules exist from earlier testing, you may need to")
+        print("       run unblock_ip() multiple times, or manually clear remaining rules first:")
+        print(f"       sudo iptables -L INPUT -n --line-numbers | grep {TEST_IP}")
+
+    if RUN_DAY33:
+        print(f"\n[test] Isolating {TEST_AGENT} (via Wazuh API, manager_ip={MANAGER_IP})...")
+        isolate_result = isolate_endpoint(TEST_AGENT, TEST_AGENT)
+        print(json.dumps(isolate_result, indent=2, default=str))
+
+        print(f"\n[test] On the agent host, verify: sudo iptables -L ISOLATE_HOST -n")
+        print("[test] Also confirm the agent is still 'active' in Wazuh (heartbeats alive):")
+        print(f"       GET /agents?name={TEST_AGENT}")
+        input("Press Enter once you've confirmed isolation + live heartbeats...")
+
+        print(f"\n[test] Unisolating {TEST_AGENT} on {TEST_SSH_HOST} (via direct SSH script call)...")
+        unisolate_result = unisolate_endpoint(TEST_AGENT, TEST_SSH_HOST)
+        print(json.dumps(unisolate_result, indent=2, default=str))
+
+        print(f"\n[test] Verify removal: sudo iptables -L ISOLATE_HOST -n")
+        print("       (should return: iptables: No chain/target/match by that name.)")
+
+    if RUN_DAY34:
+        print(f"\n[test] Creating GitHub ticket for a simulated high-confidence alert...")
+        test_alert = {
+            "rule": {"description": "sshd: Attempt to login using non-existent user", "level": 10},
+            "agent": {"name": TEST_AGENT},
+            "data": {"srcip": TEST_IP, "dstuser": "root(uid=0)"},
+            "@timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+        ticket_result = create_ticket(
+            alert=test_alert,
+            triage_summary=(
+                "Repeated failed SSH login attempts from "
+                f"{TEST_IP} targeting root and multiple other usernames "
+                "within a short window. Consistent with automated "
+                "brute-force credential guessing (T1110)."
+            ),
+            confidence=91,
+            technique="T1110",
+        )
+        print(json.dumps(ticket_result, indent=2, default=str))
+        if ticket_result["success"]:
+            print(f"[test] PASS — issue created: {ticket_result['target']}")
+        else:
+            print(f"[test] FAIL — {ticket_result['detail']}")

@@ -379,6 +379,14 @@ def write_response_log_entry(action_type, target, agent, reversible,
     confidence    int | None   confidence_pct at decision time
 
     Never raises — mirrors every other write_* function in this file.
+
+    NOTE: response_tools.py (Day 32-34) uses its own, separately-shaped
+    _log_response_action() helper writing to the same siem-response-log
+    index (fields: action_type, target, endpoint, reversible, success,
+    detail, timestamp). Both write to siem-response-log but are not the
+    same function — response_node() in agents/response_agent.py calls this
+    one; block_ip()/isolate_endpoint()/create_ticket() in response_tools.py
+    call the other one internally.
     """
     doc = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -414,6 +422,43 @@ def get_recent_response_actions(size=20):
         return _post(f"{RESPONSE_LOG_INDEX}/_search", body)
     except Exception as e:
         print(f"[get_recent_response_actions] ES read failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# NEW FUNCTION — Day 34: write GitHub ticket URL back onto the alert doc
+# ---------------------------------------------------------------------------
+# Same _update-API pattern as write_triage_result_to_es() (Day 17), but
+# using the _post() helper convention like every other function in this
+# section, rather than a raw requests.post call.
+
+def update_alert_with_ticket_url(es_index: str, es_id: str, ticket_url: str):
+    """
+    Writes the GitHub ticket URL back onto the original Wazuh alert document
+    via ES's _update API, adding a `response.ticket_url` field.
+
+    Parameters
+    ----------
+    es_index : str
+        The full index name of the alert document (the `_index` field from
+        the ES search hit, or alert_es_index in AgentState).
+    es_id : str
+        The document `_id` (or alert_es_id in AgentState).
+    ticket_url : str
+        The GitHub issue's html_url, as returned by response_tools.create_ticket().
+
+    Returns
+    -------
+    dict | None
+        The parsed ES response on success, None on failure. Never raises —
+        matches every other write_* function in this file; a failed
+        write-back here must not lose the ticket that was already created.
+    """
+    body = {"doc": {"response": {"ticket_url": ticket_url}}}
+    try:
+        return _post(f"{es_index}/_update/{es_id}", body)
+    except Exception as e:
+        print(f"[update_alert_with_ticket_url] ES write failed: {e}")
         return None
 
 
