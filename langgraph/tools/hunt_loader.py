@@ -1,20 +1,22 @@
 """
-tools/hunt_loader.py — Day 27, updated Day 28, updated Day 30
+tools/hunt_loader.py — Day 27, updated Day 28, updated Day 30, updated Day 39
 
 Loads YAML-defined hunt playbooks from /langgraph/hunts/ and runs them against
 Elasticsearch, reusing the same _post() helper convention every other file in
 the project uses (tools/elastic_tools.py).
 
 Why a separate loader instead of just extending Day 26's HuntPlaybook dataclass:
-Day 26's run_hunt() expects a single Elastic DSL bool clause and normalizes plain
-search hits into findings. Hunts 1-2 here need aggregations (cardinality / sum +
-bucket_selector) so the threshold lives in the query itself, not in Python. This
-loader handles both shapes generically: aggregation buckets when present
-(threshold already enforced server-side), hits otherwise.
+Day 26's run_hunt() expects a single Elastic DSL bool clause and normalizes
+plain search hits into findings. Hunts 1-2 here need aggregations (cardinality /
+sum + bucket_selector), so the threshold has to live in the query itself — not
+in Python, where it could drift out of sync with the lookback window.
+hunt_loader.py handles both shapes generically: aggregation buckets when
+present (threshold already enforced server-side via bucket_selector), hits
+otherwise (threshold checked in Python against finding_threshold).
 
 Placeholders substituted into elastic_query at run time from the top-level YAML
 fields, so the threshold and lookback window are defined ONCE and can't drift
-out of sync with the query body:
+out of sync with the query text:
     TIME_WINDOW_HOURS   -> str(time_window_hours)
     TIME_WINDOW_SECONDS -> str(time_window_hours * 3600)   [Day 28 — needed by
                             hunt_beaconing.yml's bucket_script interval math]
@@ -35,13 +37,25 @@ Day 30 addition: run_yaml_hunt() previously built its own fixed-template
 hunt_summary string and never wrote to siem-hunt-results or escalated
 anywhere — it was the one engine the Day 29 work skipped (Day 29 only wired
 agents/hunting_agent.py's run_hunt(), the 2-playbook engine). run_yaml_hunt()
-now calls the same three Day 29 calls run_hunt() makes:
-summarize_hunt_findings() (Gemini summary), write_hunt_result_to_es()
-(persists every cycle, success or failure), and escalate_hunt_to_triage()
-(synthetic alert into coordination_agent/triage_agent) when escalate=True.
+now calls the same three Day 29 calls run_hunt() makes: summarize_hunt_findings()
+(Gemini summary), write_hunt_result_to_es() (persists every cycle, success or
+failure), and escalate_hunt_to_triage() (synthetic alert into
+coordination_agent/triage_agent) when escalate=True.
 _normalize_findings_for_summary() reshapes both finding formats (ES hits and
-aggregation buckets) into the flat shape those three functions already
-expect, since run_hunt()'s findings only ever come from raw hits.
+aggregation buckets) into the flat shape those three functions already expect,
+since run_hunt()'s findings only ever come from raw hits.
+
+Day 39 bug fix — _normalize_findings_for_summary() losing bare-string
+aggregation keys:
+    Hunt 1 (lateral_movement_ssh) buckets on a single field (agent.name), so
+    Elasticsearch returns each bucket's "key" as a bare string (e.g. "agent1"),
+    not a dict. The old code only handled dict-shaped composite keys
+    (`key.get("host")`, etc.) and treated anything else — including a
+    perfectly good string key — as `{}`, silently discarding it. This is the
+    confirmed root cause of the Phase 2 Scenario 2 bug where the synthetic
+    escalated alert reported agent.name/data.srcip as "unknown" even though
+    the aggregation bucket's key was literally "agent1". Fixed below by
+    branching on the key's actual type instead of assuming dict-or-nothing.
 """
 import glob
 import json
@@ -102,7 +116,8 @@ def _apply_baseline_check(playbook: dict, findings: list, window_hours: float) -
     multiplier = bc.get("multiplier", 3)
 
     for finding in findings:
-        entity = finding.get("key", {}).get(entity_field)
+        key = finding.get("key")
+        entity = key.get(entity_field) if isinstance(key, dict) else key
         if entity is None:
             continue
         baseline = get_baseline(baseline_type, entity)
@@ -125,24 +140,58 @@ def _normalize_findings_for_summary(findings: list, is_aggregation: bool) -> lis
     so summarize_hunt_findings() and escalate_hunt_to_triage() — both written
     against that shape — get real field values instead of "unknown" placeholders.
 
-    Best-effort on the aggregation side: composite key field names vary per
-    playbook (e.g. hunt_beaconing.yml's composite key uses {host, peer_ip}).
-    If a hunt's Gemini summary or synthetic alert comes back with "unknown"
-    fields, tighten the .get() fallbacks below to match that hunt's actual
-    composite key names.
+    Day 39 fix: an aggregation bucket's "key" can be EITHER a dict (composite
+    aggregations, e.g. hunt_beaconing.yml's {host, peer_ip}) OR a bare string
+    (single-field terms aggregations, e.g. hunt_lateral_movement.yml bucketing
+    on agent.name directly). The old code only handled the dict case and
+    silently dropped bare strings into an empty {} — meaning Hunt 1's bucket
+    key "agent1" never made it into agent_name at all. Now both shapes are
+    handled explicitly.
+
+    If a hunt's Gemini summary or synthetic alert still comes back with
+    "unknown" fields after this fix, check whether that hunt's aggregation
+    uses a composite key whose sub-field names don't match the ones checked
+    below (host/agent_name/agent.name, src_ip/peer_ip/data.srcip,
+    dstuser/data.dstuser) and extend the .get() fallbacks accordingly.
     """
     normalized = []
     for f in findings:
         if is_aggregation:
-            key = f.get("key") if isinstance(f.get("key"), dict) else {}
+            raw_key = f.get("key")
+
+            if isinstance(raw_key, dict):
+                # Composite aggregation (e.g. beaconing_c2_pattern: {host, peer_ip})
+                agent_name = (raw_key.get("host") or raw_key.get("agent_name")
+                              or raw_key.get("agent.name"))
+                src_ip = (raw_key.get("src_ip") or raw_key.get("peer_ip")
+                          or raw_key.get("data.srcip"))
+                dst_user = raw_key.get("dstuser") or raw_key.get("data.dstuser")
+            elif isinstance(raw_key, str):
+                # Day 39 fix: single-field terms aggregation — the bucket key
+                # IS the entity value, not a dict to dig into. Which field it
+                # represents depends on the hunt (lateral_movement_ssh buckets
+                # on agent.name), so we surface it as agent_name, which is the
+                # correct mapping for the hunts currently registered. If a
+                # future single-field hunt buckets on something else (e.g.
+                # src_ip directly), add a per-hunt override here rather than
+                # guessing generically.
+                agent_name = raw_key
+                distinct_ips = f.get("distinct_src_ips", {})
+                src_ip = "multiple" if distinct_ips.get("value", 0) > 1 else None
+                dst_user = None
+            else:
+                agent_name = None
+                src_ip = None
+                dst_user = None
+
             normalized.append({
                 "es_id": None,
                 "timestamp": None,
                 "rule_id": None,
                 "rule_description": None,
-                "agent_name": key.get("host") or key.get("agent_name"),
-                "src_ip": key.get("src_ip") or key.get("peer_ip") or key.get("data.srcip"),
-                "dst_user": key.get("dstuser") or key.get("data.dstuser"),
+                "agent_name": agent_name,
+                "src_ip": src_ip,
+                "dst_user": dst_user,
                 "doc_count": f.get("doc_count"),
             })
         else:
@@ -209,6 +258,8 @@ def run_yaml_hunt(playbook: dict) -> dict:
     # Day 30: reuse the Day 29 summarizer/storage/escalation pipeline instead
     # of the old fixed-template summary string — same three calls run_hunt()
     # already makes in agents/hunting_agent.py.
+    # Day 39: normalization now correctly preserves bare-string agg keys (see
+    # _normalize_findings_for_summary docstring above).
     normalized = _normalize_findings_for_summary(findings, is_aggregation)
     hunt_summary = summarize_hunt_findings(hunt_name, normalized, mitre_technique)
 
@@ -243,3 +294,15 @@ if __name__ == "__main__":
     for result in run_all_yaml_hunts():
         print(f"- {result['hunt_name']}: {result['hunt_summary']} "
               f"escalate={result['escalate']}")
+
+    # Day 39 regression test: confirm a bare-string aggregation key (Hunt 1's
+    # shape) survives normalization instead of being dropped to None/"unknown".
+    print("\n=== Day 39 regression test — bare-string agg key normalization ===")
+    fake_findings = [{"key": "agent1", "doc_count": 6, "distinct_src_ips": {"value": 6}}]
+    normalized = _normalize_findings_for_summary(fake_findings, is_aggregation=True)
+    assert normalized[0]["agent_name"] == "agent1", (
+        f"Day 39 fix regressed — expected agent_name='agent1', got "
+        f"{normalized[0]['agent_name']!r}"
+    )
+    assert normalized[0]["src_ip"] == "multiple"
+    print(f"PASS — {fake_findings[0]} -> {normalized[0]}")

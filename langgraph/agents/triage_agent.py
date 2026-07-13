@@ -8,6 +8,17 @@ Day 24 — when CTI match found, automatically calls get_threat_actor_profile()
           and folds campaigns/TTPs/target sectors into the prompt AND the
           final summary (deterministic append — not dependent on the LLM
           choosing to repeat it).
+Day 39 — two bug fixes from Phase 2 Scenario 3 / Scenario 2 testing:
+          1. Added _build_volume_context() — data.bytes_out/bytes_in/conn_count
+             were never surfaced to the LLM, so a 500MB after-hours transfer
+             that correctly reached the TRIAGE tier still came back verdict
+             =unknown because the model never saw the volume signal.
+          2. confidence_pct is now preserved when it was pre-scored upstream
+             (state["_pre_scored"] is True — set by hunting_agent.py's
+             escalate_hunt_to_triage() for hunt-originated synthetic alerts)
+             instead of always being overwritten by the flat verdict->pct
+             mapping. Mirrors the pattern coordination_agent.py already uses
+             for the Day 24 CTI force-route override.
 
 What this agent does:
   1. Pulls source IP and user from the incoming alert.
@@ -15,10 +26,12 @@ What this agent does:
   3. Calls get_user_login_history() — 7-day history for the targeted user.
   4. [Day 23] Reads CTI enrichment fields already attached by pipeline_runner.
   5. [Day 24] If CTI matched, calls get_threat_actor_profile() for that actor.
-  6. Builds a structured prompt (including CTI + actor profile) and calls Gemini.
-  7. Parses the LLM response into {verdict, summary, evidence, technique}.
-  8. [Day 24] Appends actor profile context to the summary deterministically.
-  9. Writes verdict + confidence score back into AgentState.
+  6. [Day 39] Builds a traffic-volume context block from data.bytes_out/in/conn_count.
+  7. Builds a structured prompt (including CTI + actor profile + volume) and calls Gemini.
+  8. Parses the LLM response into {verdict, summary, evidence, technique}.
+  9. [Day 24] Appends actor profile context to the summary deterministically.
+  10. Writes verdict + confidence score back into AgentState, preserving any
+      pre-scored confidence_pct set upstream (Day 39).
 """
 
 import json
@@ -41,6 +54,13 @@ CLAUDE_MODEL = "claude-sonnet-4-20250514"
 OPENAI_MODEL = "gpt-4o-mini"
 GEMINI_MODEL = "gemini-2.5-flash"
 
+# Day 39: single-event outbound transfer size (bytes) that's called out
+# explicitly to the LLM as a plausible exfiltration indicator. Kept in sync
+# with confidence_scorer.LARGE_TRANSFER_BYTES_THRESHOLD conceptually, but
+# defined independently here since this is a prompt-language threshold, not
+# a scoring threshold — the two are allowed to drift if there's a reason.
+VOLUME_CONTEXT_FLAG_BYTES = 50_000_000  # 50MB
+
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -59,6 +79,55 @@ def _summarise_events(events: list) -> str:
         usr  = data.get("dstuser") or e.get("data.dstuser", "?")
         lines.append(f"  {i}. [{ts}] rule={rid} src={src} user={usr} — {desc}")
     return "\n".join(lines)
+
+
+def _build_volume_context(alert: dict) -> str:
+    """
+    [Day 39] Surfaces transfer-volume / connection-count fields to the LLM.
+
+    Bug fixed: data.bytes_out (and friends) were present on the alert dict
+    and correctly boosted confidence_scorer.py's score, but were never read
+    into the prompt at all — the LLM was reasoning about a "packet accepted"
+    firewall event with zero awareness that 500MB moved in that event. This
+    silently downgraded a scorer-flagged high-confidence alert to a hedge
+    ("unclear without more context") verdict of unknown.
+
+    Returns "" when none of these fields are present, so most alerts see no
+    change to the prompt at all.
+    """
+    data = alert.get("data", {})
+    bytes_out  = data.get("bytes_out")
+    bytes_in   = data.get("bytes_in")
+    conn_count = data.get("conn_count")
+
+    if not any([bytes_out, bytes_in, conn_count]):
+        return ""
+
+    lines = ["\n=== TRAFFIC VOLUME CONTEXT ==="]
+
+    if bytes_out is not None:
+        try:
+            bytes_out_int = int(bytes_out)
+            mb_out = bytes_out_int / 1_000_000
+            lines.append(f"- Outbound bytes: {bytes_out_int} (~{mb_out:.1f} MB)")
+            if bytes_out_int > VOLUME_CONTEXT_FLAG_BYTES:
+                lines.append(
+                    "  NOTE: this is a large outbound transfer for a single event. "
+                    "Treat as a plausible data exfiltration indicator unless there "
+                    "is a clear benign explanation (e.g. scheduled backup job, known "
+                    "large file share). Do not default to 'unknown' purely for lack "
+                    "of protocol/port detail — weigh the volume itself as evidence."
+                )
+        except (TypeError, ValueError):
+            lines.append(f"- Outbound bytes: {bytes_out} (unparsed)")
+
+    if bytes_in is not None:
+        lines.append(f"- Inbound bytes: {bytes_in}")
+
+    if conn_count is not None:
+        lines.append(f"- Connection count: {conn_count}")
+
+    return "\n".join(lines) + "\n"
 
 
 def _build_cti_block(alert: dict, actor_profile: dict | None = None) -> str:
@@ -378,11 +447,25 @@ def triage_node(state: dict) -> dict:
     cti_matched = alert.get("cti.matched", False)
     cti_actor   = alert.get("cti.threat_actor")
 
+    # [Day 39] Was confidence_pct pre-scored upstream by an override that
+    # should survive triage's own verdict->pct mapping? Currently set by
+    # hunting_agent.escalate_hunt_to_triage() for hunt-originated synthetic
+    # alerts (pre-scored at 85%, per HUNT_ESCALATION_CONFIDENCE_PCT). If
+    # coordination_agent.py's CTI force-route path is later updated to set
+    # this same flag, it will be honoured here automatically too.
+    pre_scored = state.get("_pre_scored", False)
+    pre_scored_pct = state.get("confidence_pct") if pre_scored else None
+
     notes.append(f"[triage] Alert: rule {rule_id} | level {rule_lvl} | src={src_ip} | user={dst_user}")
     if cti_matched:
         notes.append(
             f"[triage] ⚠️  CTI match: actor={cti_actor} "
             f"source={alert.get('cti.source')} conf={alert.get('cti.confidence')}%"
+        )
+    if pre_scored:
+        notes.append(
+            f"[triage] confidence_pct={pre_scored_pct}% was pre-scored upstream — "
+            f"will be preserved rather than overwritten by verdict mapping"
         )
 
     # [Day 24] Resolve threat actor profile up front if there's a CTI match
@@ -417,7 +500,8 @@ def triage_node(state: dict) -> dict:
 
     if pre is not None:
         notes.append(f"[triage] Pre-classifier verdict: {pre['verdict']} (LLM skipped)")
-        conf_pct         = _confidence_from_verdict(pre["verdict"], len(recent_events))
+        conf_pct = pre_scored_pct if pre_scored_pct is not None else \
+            _confidence_from_verdict(pre["verdict"], len(recent_events))
         confidence_label = "high" if conf_pct >= 65 else ("medium" if conf_pct >= 35 else "low")
         escalate         = pre["verdict"] == "suspicious" and conf_pct >= 65
         notes.append(f"[triage] confidence={confidence_label} ({conf_pct}%) | escalate={escalate}")
@@ -440,6 +524,10 @@ def triage_node(state: dict) -> dict:
     # [Day 23/24] Build CTI section, now with actor profile folded in
     cti_block = _build_cti_block(alert, actor_profile)
 
+    # [Day 39] Build traffic-volume context section (empty string if no
+    # relevant fields present on the alert)
+    volume_block = _build_volume_context(alert)
+
     prompt = f"""You are a cybersecurity analyst reviewing a SIEM alert. Analyse the evidence below and return ONLY a JSON object — no explanation, no markdown, no text before or after the JSON.
 
 === ALERT ===
@@ -450,7 +538,7 @@ Source IP    : {src_ip}
 Target user  : {dst_user}
 Agent (host) : {agent_nm}
 Context note : {context_note if context_note else "none"}
-{cti_block}
+{cti_block}{volume_block}
 === RECENT EVENTS FROM THIS IP (last 60 min, max 8 shown) ===
 {_summarise_events(recent_events)}
 
@@ -466,12 +554,15 @@ Based on the alert and supporting evidence above, decide:
 If the CTI section shows an IOC match, treat that as strong evidence of a real threat.
 If a threat actor profile is provided, reference the actor's known campaigns
 or TTPs in your summary when relevant.
+If a traffic volume context section is present, weigh large transfer volumes as
+meaningful evidence on their own — do not default to "unknown" purely because a
+protocol/port isn't specified when a large volume signal is present.
 
 Return EXACTLY this JSON structure (no other text):
 {{
   "verdict": "suspicious" | "benign" | "unknown",
   "summary": "2-3 sentence plain-English explanation of your reasoning",
-  "technique": "T1110" | "T1059" | "T1078" | null,
+  "technique": "T1110" | "T1059" | "T1078" | "T1041" | null,
   "evidence": [
     "Evidence point 1",
     "Evidence point 2",
@@ -489,7 +580,16 @@ Return EXACTLY this JSON structure (no other text):
 
     notes.append(f"[triage] Verdict: {triage_result['verdict']} | {triage_result['summary'][:80]}...")
 
-    conf_pct = _confidence_from_verdict(triage_result["verdict"], len(recent_events))
+    # [Day 39] Preserve a pre-scored confidence_pct (e.g. hunt-escalation's
+    # 85%) instead of always recomputing from the verdict. Previously this
+    # unconditionally overwrote the pre-set value — confirmed as a bug in
+    # Phase 2 Scenario 2 testing (coordination logged 85%, final state showed
+    # 75%, because this line clobbered it every time regardless of origin).
+    if pre_scored_pct is not None:
+        conf_pct = pre_scored_pct
+    else:
+        conf_pct = _confidence_from_verdict(triage_result["verdict"], len(recent_events))
+
     confidence_label = "high" if conf_pct >= 65 else ("medium" if conf_pct >= 35 else "low")
     escalate = triage_result["verdict"] == "suspicious" and conf_pct >= 65
 
@@ -555,3 +655,37 @@ if __name__ == "__main__":
     print("\n── AGENT NOTES ──")
     for note in result["notes"]:
         print(f"  {note}")
+
+    # [Day 39] Regression test for the Scenario 3 exfil bug: same alert
+    # shape, but with a large data.bytes_out and NO CTI match, to confirm
+    # the volume-context block changes the verdict rather than defaulting
+    # to "unknown".
+    print("\n\n=== Day 39 regression test — 500MB exfil, no CTI match ===\n")
+    exfil_alert = {
+        "rule": {
+            "id": "100001",
+            "description": "Firewall: packet accepted",
+            "groups": ["firewall"],
+            "level": 8,
+        },
+        "data": {
+            "srcip": "192.0.2.199",
+            "dstuser": "unknown",
+            "login_hour": 3,
+            "is_new_ip": True,
+            "bytes_out": 500_000_000,
+        },
+        "agent": {"name": "agent1"},
+        "@timestamp": "2026-07-10T03:00:00Z",
+        "cti.matched": False,
+    }
+    exfil_state = {
+        "alert": exfil_alert,
+        "notes": [],
+        "confidence": None,
+        "technique": None,
+        "escalate": False,
+    }
+    exfil_result = triage_node(exfil_state)
+    print(json.dumps(exfil_result["triage_result"], indent=2))
+    print(f"\n  confidence_pct={exfil_result['confidence_pct']}%  escalate={exfil_result['escalate']}")

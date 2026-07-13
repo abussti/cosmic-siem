@@ -6,6 +6,14 @@
 # Day 26: added a SECOND, alert-independent hunting engine below
 #         (HuntPlaybook / run_hunt / run_all_default_hunts). See the
 #         banner comment further down for the boundary between the two.
+# Day 39: bug fix — escalate_hunt_to_triage() now sets state["_pre_scored"]
+#         = True on the synthetic-alert state it hands to graph.pipeline, so
+#         triage_agent.py's confidence_pct preservation fix (companion Day 39
+#         change) actually has something to key off of. Confirmed against
+#         Phase 2 Scenario 2 testing: coordination logged confidence_pct=85
+#         but the final state showed 75, because triage_agent.py had no way
+#         to know 85 was a deliberate pre-scored override rather than a
+#         stale default.
 
 import logging
 from dataclasses import dataclass
@@ -344,6 +352,7 @@ def run_hunt(playbook: HuntPlaybook) -> dict:
 
 # ---------------------------------------------------------------------------
 # Day 29 — Gemini summary storage + escalation to coordination_agent
+# Day 39 — _pre_scored flag added to the escalation state (bug fix)
 # ---------------------------------------------------------------------------
 
 # Synthetic alerts skip confidence_scorer.py entirely and are pre-scored here,
@@ -362,6 +371,15 @@ def build_synthetic_alert_from_hunt(
     This means zero changes are needed in coordination_agent.py or
     triage_agent.py to accept a hunt-originated alert — it just looks like
     any other alert dict going into the graph.
+
+    Day 39 note: this function trusts findings[0] to already carry flat
+    "src_ip" / "dst_user" / "agent_name" keys. That normalization is done by
+    the caller — run_hunt() above builds findings with those keys directly
+    from hit._source, and hunt_loader.py's _normalize_findings_for_summary()
+    (Day 39 bug fix there) now does the same for aggregation-based YAML hunts
+    before calling this function. If you add a new finding source, normalize
+    it to these three keys before calling build_synthetic_alert_from_hunt() —
+    don't special-case a new key shape in here.
     """
     top = findings[0] if findings else {}
     src_ip = top.get("src_ip") or "unknown"
@@ -405,6 +423,15 @@ def escalate_hunt_to_triage(
     Never raises — an import or pipeline failure here must not crash the
     hunt cycle that triggered it. Returns None on failure, the pipeline's
     result dict on success.
+
+    Day 39 bug fix: the invoke state now includes "_pre_scored": True
+    alongside "confidence_pct": HUNT_ESCALATION_CONFIDENCE_PCT. Previously
+    only confidence_pct was set, with no signal telling triage_agent.py that
+    this value was a deliberate upstream override rather than an unset
+    default — triage_node() would always recompute confidence_pct from the
+    verdict (75/20/40) and silently discard the 85% override. Confirmed as
+    the root cause of the Phase 2 Scenario 2 test's confidence_pct
+    discrepancy (coordination logged 85, final state showed 75).
     """
     synthetic_alert = build_synthetic_alert_from_hunt(hunt_name, findings, mitre_technique)
     synthetic_alert["hunt_origin"]["gemini_summary"] = hunt_summary
@@ -419,6 +446,7 @@ def escalate_hunt_to_triage(
         return pipeline.invoke({
             "alert": synthetic_alert,
             "confidence_pct": HUNT_ESCALATION_CONFIDENCE_PCT,
+            "_pre_scored": True,  # Day 39 fix — see docstring above
             "notes": [f"[hunting_agent] synthetic alert from proactive hunt '{hunt_name}'"],
         })
     except Exception as exc:
@@ -505,3 +533,21 @@ if __name__ == "__main__":
     for r in run_all_default_hunts():
         print(f"- {r['hunt_name']}: threats_found={r['threats_found']} escalate={r['escalate']}")
         print(f"  {r['hunt_summary']}")
+
+    # Day 39 regression test: confirm the _pre_scored flag actually reaches
+    # graph.pipeline's invoke() call when a hunt escalates. This doesn't
+    # require a real ES/Gemini connection to check — it inspects the dict
+    # passed to pipeline.invoke() directly.
+    print("\n=== Day 39 regression test — _pre_scored flag on escalation ===")
+    test_findings = [{"src_ip": "203.0.113.11", "dst_user": "svc-app", "agent_name": "agent1"}]
+    try:
+        from unittest.mock import patch
+        with patch("graph.pipeline") as mock_pipeline:
+            mock_pipeline.invoke.return_value = {"confidence_pct": 85}
+            escalate_hunt_to_triage("lateral_movement_ssh", test_findings, "test summary", "T1021.004")
+            called_state = mock_pipeline.invoke.call_args[0][0]
+            assert called_state.get("_pre_scored") is True, "Day 39 fix missing: _pre_scored not set"
+            assert called_state.get("confidence_pct") == HUNT_ESCALATION_CONFIDENCE_PCT
+            print("PASS — escalate_hunt_to_triage() sets _pre_scored=True and confidence_pct=85")
+    except ImportError:
+        print("SKIPPED — unittest.mock or graph module not available in this environment")
