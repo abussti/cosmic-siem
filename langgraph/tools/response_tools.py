@@ -42,10 +42,11 @@ isolate-host.sh and the ossec.conf snippet in the Day 33 notes. It follows
 the same "!command_name" invocation convention as firewall-drop so it slots
 into _send_active_response() with zero changes to that helper.
 
-create_ticket() (Day 34) is unrelated to the Wazuh active-response path
-above — it's a plain REST call to the GitHub Issues API — but lives in this
-file per the Day 34 plan, and reuses the same never-raises /
-log-every-attempt conventions as block_ip()/isolate_endpoint().
+create_ticket() (Day 34, executive_brief added Day 44) is unrelated to the
+Wazuh active-response path above — it's a plain REST call to the GitHub
+Issues API — but lives in this file per the Day 34 plan, and reuses the
+same never-raises / log-every-attempt conventions as block_ip()/
+isolate_endpoint().
 
 Mirrors the conventions already used in tools/elastic_tools.py:
   - thin `requests`-based helpers, no SDK client object
@@ -59,7 +60,8 @@ Five public functions:
     isolate_endpoint(agent_id, endpoint)   -> dict   (Day 33)
     unisolate_endpoint(agent_id, endpoint) -> dict   (Day 33, Day 39 fixes)
     create_ticket(alert, triage_summary,
-                   confidence, technique)  -> dict   (Day 34)
+                   confidence, technique,
+                   executive_brief)        -> dict   (Day 34, Day 44)
 
 All five log every call to siem-response-log regardless of success or
 failure, so the audit trail is complete even on API errors.
@@ -608,7 +610,7 @@ def _github_headers():
     }
 
 
-def create_ticket(alert, triage_summary, confidence, technique=None):
+def create_ticket(alert, triage_summary, confidence, technique=None, executive_brief=None):
     """
     Create a GitHub Issue for a confirmed threat that requires analyst review.
 
@@ -630,6 +632,13 @@ def create_ticket(alert, triage_summary, confidence, technique=None):
         triage_summary: str — the triage agent's summary/evidence text
         confidence: int (0-100) — confidence_pct at decision time
         technique: str | None — MITRE ATT&CK ID, e.g. "T1110"
+        executive_brief: str | None — [Day 44] a Gemini-generated 5-sentence
+            executive brief (from tools/redteam_reporter.generate_reports(),
+            via agents/attack_chain_simulator.run_attack_chain()'s returned
+            "executive_summary" field). When present, appended to the issue
+            body as its own section so the ticket is useful to both an
+            analyst (triage_summary) and a non-technical stakeholder who
+            opens the same issue (executive_brief).
 
     Returns:
         dict — success / action_type="create_ticket" / target (issue html_url,
@@ -678,8 +687,17 @@ def create_ticket(alert, triage_summary, confidence, technique=None):
         f"- Confirm or dismiss via the SOC dashboard\n"
         f"- Escalate to response agent (block_ip / isolate_endpoint) if confirmed malicious\n"
     )
+    # [Day 44] Fold in the Gemini-generated executive brief, when supplied,
+    # as its own section — same "never block on missing optional data"
+    # approach the rest of this function already uses (e.g. technique
+    # defaulting to "Not identified").
+    if executive_brief:
+        body += f"\n### Executive Brief\n{executive_brief}\n"
 
     labels = [f"severity-{severity}", "needs-analyst-review", "auto-generated"]
+    if executive_brief:
+        labels.append("has-executive-brief")
+
     payload = {"title": title, "body": body, "labels": labels}
     url = f"{GITHUB_API_URL}/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/issues"
 
@@ -743,6 +761,7 @@ if __name__ == "__main__":
     RUN_DAY33 = os.environ.get("RUN_DAY33", "1") == "1"
     RUN_DAY34 = os.environ.get("RUN_DAY34", "1") == "1"
     RUN_DAY39 = os.environ.get("RUN_DAY39", "1") == "1"
+    RUN_DAY44 = os.environ.get("RUN_DAY44", "1") == "1"
 
     if RUN_DAY32:
         print(f"[test] Blocking {TEST_IP} on {TEST_AGENT} (via Wazuh API)...")
@@ -842,3 +861,33 @@ if __name__ == "__main__":
         assert success2 is True
         assert detail2["attempts"] == 1, "should not retry once a command succeeds"
         print(f"PASS — _run_ssh_command_with_retry() returns immediately on first success: {detail2}")
+
+    if RUN_DAY44:
+        print("\n=== Day 44 regression test — create_ticket() accepts executive_brief ===")
+        test_alert_44 = {
+            "rule": {"description": "Simulated attack chain finding", "level": 12},
+            "agent": {"name": TEST_AGENT},
+            "data": {"srcip": TEST_IP},
+            "@timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        }
+        ticket_result_44 = create_ticket(
+            alert=test_alert_44,
+            triage_summary="Technical summary placeholder for Day 44 regression test.",
+            confidence=91,
+            technique="T1110",
+            executive_brief=(
+                "This is a placeholder 5-sentence executive brief for regression "
+                "testing purposes only, standing in for a real Gemini-generated one. "
+                "It confirms create_ticket() accepts and folds in executive_brief. "
+                "No real business impact is implied by this test run. "
+                "Urgency: N/A (test)."
+            ),
+        )
+        print(json.dumps(ticket_result_44, indent=2, default=str))
+        if ticket_result_44["success"]:
+            print(f"[test] PASS — issue created with executive brief: {ticket_result_44['target']}")
+        else:
+            print(f"[test] NOTE — ticket not created ({ticket_result_44['detail']}); "
+                  f"this is expected if GITHUB_TOKEN/OWNER/REPO aren't configured in this "
+                  f"environment. The important check is that create_ticket() accepted the "
+                  f"executive_brief kwarg without raising, which it did.")

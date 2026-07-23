@@ -1,0 +1,19 @@
+chain_name: external_intrusion
+description: >
+  External attacker path: compromise a public-facing application, execute
+  commands on the host, move laterally over SSH, then exfiltrate data over
+  a non-standard protocol. Mirrors the classic "outside-in" breach pattern.
+entry_alert_technique: T1190   # coordination/triage technique that should trigger this chain
+steps:
+  - technique: T1190
+    name: "Exploit Public-Facing Application"
+    mitre_tactic: "Initial Access"
+  - technique: T1059
+    name: "Command and Scripting Interpreter"
+    mitre_tactic: "Execution"
+  - technique: T1021
+    name: "Lateral Movement — Remote Services (SSH)"
+    mitre_tactic: "Lateral Movement"
+  - technique: T1048
+    name: "Exfiltration Over Alternative Protocol"
+    mitre_tactic: "Exfiltration"

@@ -217,7 +217,7 @@ def get_user_login_history(username: str, days: int = 7, size: int = 50) -> list
 # ---------------------------------------------------------------------------
 # NEW FUNCTION 1 — write triage result back to the original alert document
 # ---------------------------------------------------------------------------
- 
+
 def write_triage_result_to_es(
     es_index: str,
     es_id: str,
@@ -226,11 +226,16 @@ def write_triage_result_to_es(
     evidence: list[str] | None = None,
     confidence_pct: int | None = None,
     technique: str | None = None,
+    cti_matched: bool | None = None,
+    cti_threat_actor: str | None = None,
+    cti_campaign: str | None = None,
+    cti_confidence: int | None = None,
+    cti_source: str | None = None,
 ) -> bool:
     """
     Write triage results back to the original Wazuh alert document in ES
     using the Update API (_update endpoint).
- 
+
     Adds the following fields to the document:
         triage.verdict          str   e.g. "suspicious" / "benign" / "unknown"
         triage.summary          str   LLM-generated summary
@@ -239,7 +244,27 @@ def write_triage_result_to_es(
         triage.technique        str   MITRE ATT&CK ID (if known)
         triage.processed_at     str   ISO-8601 timestamp of when triage ran
         triage.pipeline_version str   always "day17-v1"
- 
+
+        [Day 36] cti.matched          bool   whether an IOC matched siem-threat-intel
+        [Day 36] cti.threat_actor     str    actor name from the matched IOC, if any
+        [Day 36] cti.campaign         str    campaign name, if any (usually None —
+                                              not in current siem-threat-intel schema)
+        [Day 36] cti.confidence       int    CTI confidence score of the matched IOC
+        [Day 36] cti.source           str    feed source, e.g. "otx" / "urlhaus"
+
+    Bug fixed (Day 36): enrich_with_cti() in pipeline_runner.py computed these
+    CTI fields on the in-memory alert dict, and the SOC dashboard's "CTI Matches"
+    panel queried for cti.matched on the persisted ES document — but this
+    function never accepted or wrote CTI fields, so cti.* was silently lost
+    after the pipeline run finished. Confirmed via Day 36 dashboard build:
+    a live pipeline run logged "CTI matched=True" but the resulting ES document
+    had no cti object at all.
+
+    The cti_* parameters are optional and default to None so existing callers
+    (e.g. test_pipeline_e2e.py) that don't pass CTI data keep working
+    unchanged — the cti block is only added to the payload if the caller
+    actually supplies it.
+
     Parameters
     ----------
     es_index : str
@@ -257,14 +282,24 @@ def write_triage_result_to_es(
         Numeric confidence score (0–100).
     technique : str, optional
         MITRE ATT&CK technique ID.
- 
+    cti_matched : bool, optional
+        Whether any IOC in the alert matched siem-threat-intel.
+    cti_threat_actor : str, optional
+        Threat actor name attributed to the matched IOC.
+    cti_campaign : str, optional
+        Campaign name attributed to the matched IOC.
+    cti_confidence : int, optional
+        CTI confidence score (0–100) of the highest-confidence matched IOC.
+    cti_source : str, optional
+        Feed source of the matched IOC, e.g. "otx" or "urlhaus".
+
     Returns
     -------
     bool
         True if the update succeeded (HTTP 200), False otherwise.
     """
     from datetime import datetime, timezone
- 
+
     url = f"{ES_URL}/{es_index}/_update/{es_id}"
     payload = {
         "doc": {
@@ -279,6 +314,19 @@ def write_triage_result_to_es(
             }
         }
     }
+
+    # [Day 36 fix] Only add the cti block if the caller actually passed CTI
+    # data — keeps old call sites that don't pass cti_* args working exactly
+    # as before, while new calls (pipeline_runner.py) get real persistence.
+    if cti_matched is not None:
+        payload["doc"]["cti"] = {
+            "matched": cti_matched,
+            "threat_actor": cti_threat_actor,
+            "campaign": cti_campaign,
+            "confidence": cti_confidence,
+            "source": cti_source,
+        }
+
     try:
         resp = requests.post(url, json=payload, auth=ES_AUTH, timeout=15)
         if resp.status_code == 200:
@@ -291,7 +339,7 @@ def write_triage_result_to_es(
     except Exception as exc:
         print(f"[ES WRITE-BACK] ❌ Exception: {exc}")
         return False
- 
+
 
 
 # ---------------------------------------------------------------------------
@@ -465,13 +513,13 @@ def update_alert_with_ticket_url(es_index: str, es_id: str, ticket_url: str):
 # ---------------------------------------------------------------------------
 # NEW FUNCTION 2 — poll for unprocessed alerts (used by pipeline_runner.py)
 # ---------------------------------------------------------------------------
- 
+
 def get_unprocessed_alerts(since_timestamp: str, size: int = 50) -> list[dict]:
     """
     Return up to `size` Wazuh alerts that:
       1. Were indexed after `since_timestamp` (ISO-8601 string)
       2. Do NOT yet have a `triage.verdict` field (i.e. not yet processed)
- 
+
     Parameters
     ----------
     since_timestamp : str
@@ -479,7 +527,7 @@ def get_unprocessed_alerts(since_timestamp: str, size: int = 50) -> list[dict]:
         Only alerts with @timestamp > this value are returned.
     size : int
         Maximum number of alerts to return per poll cycle. Default 50.
- 
+
     Returns
     -------
     list[dict]
@@ -793,6 +841,132 @@ def get_ioc_history(ioc_value: str) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# NEW FUNCTIONS — Day 43: attack chain simulation storage (siem-redteam-chains)
+# ---------------------------------------------------------------------------
+# Same _post() convention as write_hunt_result_to_es (Day 29) and
+# write_response_log_entry (Day 31). Called by
+# agents/attack_chain_simulator.py's run_attack_chain() once per chain run.
+
+CHAIN_LOG_INDEX = "siem-redteam-chains"
+
+
+def write_chain_result_to_es(chain_name, target_agent, chain_result,
+                              fully_exploitable, mode):
+    """
+    Writes one attack-chain simulation result to siem-redteam-chains.
+
+    Fields (per Day 43 spec): chain_name, target_agent, chain_result
+    (the full per-step list), fully_exploitable, blocked_count, mode,
+    timestamp.
+
+    chain_name         str    e.g. "external_intrusion"
+    target_agent       str    Wazuh agent name the chain was run against
+    chain_result       list   [{step, name, mitre_tactic, exploitable,
+                                evidence, blocked_by}, ...] — same shape
+                               attack_chain_simulator.run_attack_chain()
+                               builds internally
+    fully_exploitable  bool   True only if every step in chain_result
+                               came back exploitable=True
+    mode               str    the REDTEAM_MODE the run executed under
+                               ("dry_run" / "live")
+
+    Never raises — mirrors every other write_* function in this file; a
+    storage hiccup here must not crash a chain simulation mid-run.
+    """
+    doc = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "chain_name": chain_name,
+        "target_agent": target_agent,
+        "chain_result": chain_result,
+        "fully_exploitable": bool(fully_exploitable),
+        "blocked_count": sum(1 for r in chain_result if not r.get("exploitable")),
+        "mode": mode,
+    }
+    try:
+        return _post(f"{CHAIN_LOG_INDEX}/_doc", doc)
+    except Exception as e:
+        print(f"[write_chain_result_to_es] ES write failed: {e}")
+        return None
+
+
+def get_recent_chain_results(size=10):
+    """
+    Latest chain-simulation results, newest first — matches
+    get_recent_hunt_results() / get_recent_response_actions()'s convention
+    exactly. Used by test_day43.py to verify a chain run was persisted.
+    """
+    body = {
+        "size": size,
+        "sort": [{"timestamp": "desc"}],
+    }
+    try:
+        return _post(f"{CHAIN_LOG_INDEX}/_search", body)
+    except Exception as e:
+        print(f"[get_recent_chain_results] ES read failed: {e}")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# NEW FUNCTIONS — Day 44: Gemini-generated technical/executive reports
+# (siem-redteam-reports)
+# ---------------------------------------------------------------------------
+# Written by agents/attack_chain_simulator.py's run_attack_chain() right
+# after chain_result is finalized, via tools/redteam_reporter.py (Gemini —
+# same LLM_BACKEND convention as triage_agent.py / hunt_summarizer.py, not
+# a second LLM provider). Same never-raises convention as every other
+# write_* function in this file.
+
+REDTEAM_REPORTS_INDEX = "siem-redteam-reports"
+
+
+def write_redteam_report_to_es(incident_id, technical_summary, executive_summary,
+                                chain_name=None, target_agent=None, timestamp=None):
+    """
+    Writes one Gemini-generated report pair to siem-redteam-reports.
+
+    Fields (per Day 44 spec): incident_id, technical_summary,
+    executive_summary, timestamp. chain_name/target_agent are extra context
+    fields, same pattern write_response_log_entry() uses for verdict/confidence.
+
+    Never raises — mirrors every other write_* function in this file; a
+    storage hiccup here must not crash a chain simulation mid-run.
+    """
+    doc = {
+        "incident_id": incident_id,
+        "technical_summary": technical_summary,
+        "executive_summary": executive_summary,
+        "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+    }
+    if chain_name is not None:
+        doc["chain_name"] = chain_name
+    if target_agent is not None:
+        doc["target_agent"] = target_agent
+
+    try:
+        return _post(f"{REDTEAM_REPORTS_INDEX}/_doc", doc)
+    except Exception as e:
+        print(f"[write_redteam_report_to_es] ES write failed: {e}")
+        return None
+
+
+def get_recent_redteam_reports(size=10):
+    """
+    Latest Gemini-generated report pairs, newest first — matches
+    get_recent_chain_results()'s convention exactly. Used by test_day44.py
+    to verify a report was persisted.
+    """
+    body = {
+        "size": size,
+        "sort": [{"timestamp": "desc"}],
+    }
+    try:
+        return _post(f"{REDTEAM_REPORTS_INDEX}/_search", body)
+    except Exception as e:
+        print(f"[get_recent_redteam_reports] ES read failed: {e}")
+        return None
+
+
 # ── quick CLI test ─────────────────────────────────────────────────────────────
 # (Moved here from mid-file — was previously sitting between get_user_login_history
 # and get_ip_seen_before, which meant later functions only existed below an
@@ -842,3 +1016,22 @@ if __name__ == "__main__":
         src = h.get("_source", {})
         print(f"  {src.get('timestamp','')} | action={src.get('action_type','?')} "
               f"| target={src.get('target','?')} | verdict={src.get('verdict','?')}")
+
+    print("\n=== get_recent_chain_results(5)  [Day 43] ===")
+    chain_results = get_recent_chain_results(5)
+    chain_hits = (chain_results or {}).get("hits", {}).get("hits", [])
+    print(f"  Found {len(chain_hits)} chain result(s)")
+    for h in chain_hits[:5]:
+        src = h.get("_source", {})
+        print(f"  {src.get('timestamp','')} | chain={src.get('chain_name','?')} "
+              f"| fully_exploitable={src.get('fully_exploitable','?')} "
+              f"| blocked={src.get('blocked_count','?')}")
+
+    print("\n=== get_recent_redteam_reports(5)  [Day 44] ===")
+    report_results = get_recent_redteam_reports(5)
+    report_hits = (report_results or {}).get("hits", {}).get("hits", [])
+    print(f"  Found {len(report_hits)} redteam report(s)")
+    for h in report_hits[:5]:
+        src = h.get("_source", {})
+        print(f"  {src.get('timestamp','')} | incident={src.get('incident_id','?')} "
+              f"| chain={src.get('chain_name','?')}")

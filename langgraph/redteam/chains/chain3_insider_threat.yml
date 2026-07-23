@@ -1,0 +1,19 @@
+chain_name: insider_threat
+description: >
+  Insider-threat path: a user with legitimate credentials enumerates files
+  they shouldn't normally need, stages sensitive data, then exfiltrates it
+  over an existing C2/covert channel rather than a bulk external transfer.
+entry_alert_technique: T1078
+steps:
+  - technique: T1078
+    name: "Valid Accounts (legitimate credentials)"
+    mitre_tactic: "Initial Access / Persistence"
+  - technique: T1083
+    name: "File and Directory Discovery"
+    mitre_tactic: "Discovery"
+  - technique: T1074
+    name: "Data Staged"
+    mitre_tactic: "Collection"
+  - technique: T1041
+    name: "Exfiltration Over C2 Channel"
+    mitre_tactic: "Exfiltration"
