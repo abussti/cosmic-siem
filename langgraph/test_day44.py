@@ -11,6 +11,7 @@ gating) and test_day31.py's ES-write verification pattern.
 """
 
 import json
+import time
 
 from agents.attack_chain_simulator import run_attack_chain
 from tools.elastic_tools import get_recent_redteam_reports
@@ -31,6 +32,11 @@ def main():
     print(result["executive_summary"])
 
     print("\n=== Verifying siem-redteam-reports write ===")
+    # [Day 44 fix] Same ES-refresh-timing race Day 33 found and fixed for
+    # siem-response-log — ES's default ~1s refresh interval means a doc
+    # written a moment ago may not be searchable yet. No production code
+    # changes needed, same as Day 33 — cosmetic, test-side only.
+    time.sleep(1.5)
     reports = get_recent_redteam_reports(size=5)
     hits = (reports or {}).get("hits", {}).get("hits", [])
     assert hits, "no report document found in siem-redteam-reports"

@@ -1,5 +1,5 @@
 """
-agents/attack_chain_simulator.py — Day 43
+agents/attack_chain_simulator.py — Day 43 (blast radius wired in Day 45)
 
 Extends the Day 41 redteam_simulator.py from single-technique testing into
 multi-step MITRE ATT&CK kill-chain simulation. This module does NOT
@@ -9,6 +9,14 @@ run_red_team_simulation() from Day 41 (same ALLOWED_TESTS gate, same
 REDTEAM_MODE dry_run default, same siem-redteam-log audit trail per
 technique). This file only adds sequencing, position-tracking across
 steps, and chain-level persistence to siem-redteam-chains.
+
+[Day 45] Also wires in tools/blast_radius.py (Day 42 — built and tested,
+but never previously called from anywhere). map_blast_radius() is
+host-centric, not technique-specific: it queries real ES data (recent
+connections, same-subnet, shared-user-access) for target_agent and returns
+a reachability graph + blast_score, independent of whether any chain step
+was exploitable. Called once per chain run, not once per step, and
+persisted to siem-blast-radius via the existing write_blast_radius_to_es().
 
 INTEGRATION NOTE: this was written against the Day 41 write-up's
 documented contract for run_red_team_simulation() / RedTeamResult
@@ -25,6 +33,7 @@ import inspect
 from tools.chain_loader import load_chain_templates, get_chain_for_technique
 from tools.elastic_tools import _post, write_redteam_report_to_es
 from tools.redteam_reporter import generate_reports
+from tools.blast_radius import map_blast_radius, write_blast_radius_to_es
 
 try:
     from agents.redteam_simulator import run_red_team_simulation, REDTEAM_MODE
@@ -201,7 +210,10 @@ def run_attack_chain(chain_name, target_agent, network_topology=None, stop_on_bl
     Returns the chain summary dict and writes it (plus one event per step)
     to siem-redteam-chains. [Day 44] Also generates a technical + executive
     summary via Gemini and writes them to siem-redteam-reports; both are
-    included in the returned dict.
+    included in the returned dict. [Day 45] Also maps the real blast
+    radius for target_agent via tools/blast_radius.py and writes it to
+    siem-blast-radius; reachable_hosts/blast_score are included in the
+    returned dict too.
     """
     chains = load_chain_templates()
     if chain_name not in chains:
@@ -263,18 +275,43 @@ def run_attack_chain(chain_name, target_agent, network_topology=None, stop_on_bl
     except Exception as e:
         print(f"[attack_chain_simulator] WARNING: failed to write chain summary to ES: {e}")
 
+    incident_id = f"{chain_name}-{target_agent}-{summary['timestamp']}"
+
+    # [Day 45] Blast radius mapping — tools/blast_radius.py (built Day 42,
+    # never previously wired to any caller). map_blast_radius() queries
+    # real connection/subnet/shared-user-access data for target_agent —
+    # independent of REDTEAM_MODE and independent of whether any step in
+    # this chain was exploitable, since it reflects actual network
+    # reachability, not the simulation result. Never raises (same
+    # fail-soft convention as every other ES-backed helper in this
+    # project); a failed write here does not block the chain from
+    # completing or from generating its Gemini reports below.
+    blast_result = map_blast_radius(target_agent)
+    blast_write = write_blast_radius_to_es(blast_result, incident_id=incident_id)
+    if not blast_write.get("success"):
+        print(f"[attack_chain_simulator] WARNING: blast radius write failed: "
+              f"{blast_write.get('detail')}")
+    summary["reachable_hosts"] = blast_result.get("reachable_hosts", [])
+    summary["blast_score"] = blast_result.get("blast_score", 0)
+    if blast_result.get("errors"):
+        summary["blast_radius_errors"] = blast_result["errors"]
+
     # [Day 44] Generate technical + executive summaries via Gemini and
     # persist them to siem-redteam-reports. Never raises — generate_reports()
     # falls back to templated text on any Gemini error, same as
     # hunt_summarizer.summarize_hunt_findings() (Day 29), so a Gemini
     # outage never blocks a chain run from completing.
-    incident_id = f"{chain_name}-{target_agent}-{summary['timestamp']}"
     reports = generate_reports(
         chain_result,
         blast_data={
             "target_agent": target_agent,
             "fully_exploitable": summary["fully_exploitable"],
             "blocked_steps": len(summary["blocked_steps"]),
+            # [Day 45] real blast radius data now available to fold into
+            # the Gemini prompt, instead of just the step-count placeholder
+            # this dict previously carried.
+            "reachable_hosts": summary["reachable_hosts"],
+            "blast_score": summary["blast_score"],
         },
     )
     write_redteam_report_to_es(
@@ -293,6 +330,8 @@ def run_attack_chain(chain_name, target_agent, network_topology=None, stop_on_bl
         "fully_exploitable": summary["fully_exploitable"],
         "blocked_count": len(summary["blocked_steps"]),
         "incident_id": incident_id,
+        "blast_score": summary["blast_score"],
+        "reachable_host_count": len(summary["reachable_hosts"]),
     })
 
     return summary
@@ -349,7 +388,8 @@ def chain_node(state):
     state.setdefault("notes", []).append(
         f"Attack chain '{chain_name}' simulated — "
         f"fully_exploitable={result['fully_exploitable']}, "
-        f"blocked_steps={len(result['blocked_steps'])}"
+        f"blocked_steps={len(result['blocked_steps'])}, "
+        f"blast_score={result.get('blast_score')}"
     )
     state["chain_result"] = result
     return state
@@ -371,6 +411,10 @@ if __name__ == "__main__":
     print(result.get("technical_summary"))
     print("\n=== Executive summary ===")
     print(result.get("executive_summary"))
+
+    print("\n=== Blast radius ===")
+    print("reachable_hosts:", result.get("reachable_hosts"))
+    print("blast_score:", result.get("blast_score"))
 
     print("\n=== Hardening recommendations ===")
     for rec in get_hardening_recommendations(result):
