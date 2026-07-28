@@ -19,6 +19,14 @@ Day 39 — two bug fixes from Phase 2 Scenario 3 / Scenario 2 testing:
              instead of always being overwritten by the flat verdict->pct
              mapping. Mirrors the pattern coordination_agent.py already uses
              for the Day 24 CTI force-route override.
+Day 47 — Added _build_ueba_block() — surfaces the UEBA anomaly score
+          (tools/ueba_scorer.py, comparing the alert's user/entity against
+          the behavioral profile ueba_engine.py builds nightly) directly in
+          the Gemini prompt, the same way CTI and traffic-volume context
+          already are. Never changes confidence_pct here (that's
+          confidence_scorer.py's job, Day 47's other change) — this is
+          purely giving the LLM the same behavioral-deviation signal a
+          human analyst reviewing the SOC dashboard would see.
 
 What this agent does:
   1. Pulls source IP and user from the incoming alert.
@@ -27,10 +35,11 @@ What this agent does:
   4. [Day 23] Reads CTI enrichment fields already attached by pipeline_runner.
   5. [Day 24] If CTI matched, calls get_threat_actor_profile() for that actor.
   6. [Day 39] Builds a traffic-volume context block from data.bytes_out/in/conn_count.
-  7. Builds a structured prompt (including CTI + actor profile + volume) and calls Gemini.
-  8. Parses the LLM response into {verdict, summary, evidence, technique}.
-  9. [Day 24] Appends actor profile context to the summary deterministically.
-  10. Writes verdict + confidence score back into AgentState, preserving any
+  7. [Day 47] Builds a UEBA behavioral-context block from tools.ueba_scorer.score_anomaly().
+  8. Builds a structured prompt (CTI + actor profile + volume + UEBA) and calls Gemini.
+  9. Parses the LLM response into {verdict, summary, evidence, technique}.
+  10. [Day 24] Appends actor profile context to the summary deterministically.
+  11. Writes verdict + confidence score back into AgentState, preserving any
       pre-scored confidence_pct set upstream (Day 39).
 """
 
@@ -43,6 +52,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tools.elastic_tools import get_recent_events, get_user_login_history, get_threat_actor_profile
+from tools.ueba_scorer import score_anomaly
 
 # ── LLM backend config ────────────────────────────────────────────────────────
 LLM_BACKEND  = "gemini"
@@ -60,6 +70,11 @@ GEMINI_MODEL = "gemini-2.5-flash"
 # defined independently here since this is a prompt-language threshold, not
 # a scoring threshold — the two are allowed to drift if there's a reason.
 VOLUME_CONTEXT_FLAG_BYTES = 50_000_000  # 50MB
+
+# Day 47: UEBA anomaly_score (0-100) above which the prompt explicitly
+# tells the LLM to weigh the behavioral deviation heavily, rather than
+# leaving it as a passive footnote.
+UEBA_CONTEXT_FLAG_SCORE = 60
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -126,6 +141,66 @@ def _build_volume_context(alert: dict) -> str:
 
     if conn_count is not None:
         lines.append(f"- Connection count: {conn_count}")
+
+    return "\n".join(lines) + "\n"
+
+
+def _build_ueba_block(alert: dict, ueba_result: dict | None = None) -> str:
+    """
+    [Day 47] Surfaces the UEBA anomaly score (tools/ueba_scorer.py) to the
+    LLM so behavioral-deviation context (unusual login hour, novel source
+    IP, rare command, elevated peer-risk, volume spike vs. this user's own
+    baseline) sits alongside the CTI and traffic-volume context blocks
+    already in the prompt.
+
+    Never raises — ueba_scorer.score_anomaly() itself never raises, and any
+    unexpected error here still returns a plain-text note rather than
+    breaking prompt construction.
+
+    Parameters
+    ----------
+    ueba_result : dict | None
+        Optional pre-computed result from score_anomaly(alert), so
+        triage_node can compute it once and reuse it for both this prompt
+        block and its own notes/logging, instead of scoring twice.
+    """
+    if ueba_result is None:
+        try:
+            ueba_result = score_anomaly(alert)
+        except Exception as exc:
+            return f"\n=== UEBA BEHAVIORAL CONTEXT ===\n- UEBA scoring unavailable: {exc}\n"
+
+    if not ueba_result.get("profile_used"):
+        return (
+            "\n=== UEBA BEHAVIORAL CONTEXT ===\n"
+            "- No behavioral profile exists yet for this user/entity "
+            "(new user, or the nightly UEBA profiler hasn't run for them "
+            "yet). Treat this as neutral — absence of a baseline is not "
+            "itself evidence of anything.\n"
+        )
+
+    anomaly_score = ueba_result.get("anomaly_score", 0)
+    breakdown = ueba_result.get("breakdown", {})
+    fired = {k: v for k, v in breakdown.items() if v.get("score", 0) > 0}
+
+    lines = [
+        "\n=== UEBA BEHAVIORAL CONTEXT ===",
+        f"- Anomaly score: {anomaly_score}/100 (0 = fully typical for this user, 100 = maximally deviant)",
+    ]
+
+    if fired:
+        lines.append("- Deviations from this user's own learned baseline:")
+        for dim, info in fired.items():
+            lines.append(f"  - {dim} (+{info['score']}): {info['reason']}")
+        if anomaly_score >= UEBA_CONTEXT_FLAG_SCORE:
+            lines.append(
+                "  NOTE: this is a high behavioral anomaly score. Weigh it as "
+                "meaningful evidence of unusual activity for this specific "
+                "user, not just a footnote — this is deviation from their "
+                "own baseline, not a generic rule threshold."
+            )
+    else:
+        lines.append("- Behavior matches this user's learned baseline on every dimension checked.")
 
     return "\n".join(lines) + "\n"
 
@@ -480,6 +555,25 @@ def triage_node(state: dict) -> dict:
             f"found={actor_profile['found']} source={actor_profile['profile_source']}"
         )
 
+    # [Day 47] Resolve the UEBA anomaly score up front, same reasoning as
+    # the actor-profile resolution above — one call, reused for both the
+    # prompt block and the agent notes/logging.
+    try:
+        ueba_result = score_anomaly(alert)
+    except Exception as exc:
+        ueba_result = {"anomaly_score": 0, "breakdown": {}, "profile_used": False}
+        notes.append(f"[triage] UEBA scoring error (non-fatal): {exc}")
+
+    if ueba_result.get("profile_used"):
+        notes.append(
+            f"[triage] UEBA anomaly_score={ueba_result['anomaly_score']}/100"
+        )
+        fired_dims = [k for k, v in ueba_result.get("breakdown", {}).items() if v.get("score", 0) > 0]
+        if fired_dims:
+            notes.append(f"[triage] UEBA dimensions triggered: {', '.join(fired_dims)}")
+    else:
+        notes.append("[triage] UEBA: no behavioral profile available for this user yet")
+
     recent_events = []
     login_history  = []
 
@@ -528,6 +622,10 @@ def triage_node(state: dict) -> dict:
     # relevant fields present on the alert)
     volume_block = _build_volume_context(alert)
 
+    # [Day 47] Build UEBA behavioral-context section, reusing the
+    # already-computed ueba_result rather than scoring twice.
+    ueba_block = _build_ueba_block(alert, ueba_result)
+
     prompt = f"""You are a cybersecurity analyst reviewing a SIEM alert. Analyse the evidence below and return ONLY a JSON object — no explanation, no markdown, no text before or after the JSON.
 
 === ALERT ===
@@ -538,7 +636,7 @@ Source IP    : {src_ip}
 Target user  : {dst_user}
 Agent (host) : {agent_nm}
 Context note : {context_note if context_note else "none"}
-{cti_block}{volume_block}
+{cti_block}{volume_block}{ueba_block}
 === RECENT EVENTS FROM THIS IP (last 60 min, max 8 shown) ===
 {_summarise_events(recent_events)}
 
@@ -557,6 +655,10 @@ or TTPs in your summary when relevant.
 If a traffic volume context section is present, weigh large transfer volumes as
 meaningful evidence on their own — do not default to "unknown" purely because a
 protocol/port isn't specified when a large volume signal is present.
+If a UEBA behavioral context section shows a high anomaly score, weigh that
+deviation from this specific user's own baseline as meaningful evidence too —
+it is a different, complementary signal from the static CTI/volume checks
+above, not a duplicate of them.
 
 Return EXACTLY this JSON structure (no other text):
 {{
@@ -689,3 +791,9 @@ if __name__ == "__main__":
     exfil_result = triage_node(exfil_state)
     print(json.dumps(exfil_result["triage_result"], indent=2))
     print(f"\n  confidence_pct={exfil_result['confidence_pct']}%  escalate={exfil_result['escalate']}")
+
+    # [Day 47] Regression test: confirm the UEBA block builds correctly and
+    # is present in the prompt path even with no profile in the environment
+    # yet (fresh/no-history case — should degrade gracefully, not crash).
+    print("\n\n=== Day 47 regression test — UEBA block, no profile yet ===\n")
+    print(_build_ueba_block(exfil_alert))

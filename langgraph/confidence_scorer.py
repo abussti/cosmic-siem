@@ -18,6 +18,7 @@ Formula
     +10  if data.is_new_ip == True          (new IP boost - Day 19)
     +20  if cti.matched == True             (CTI IOC match - Day 23)
     +15  if data.bytes_out > 100MB          (large single-event transfer - Day 39)
+    +0-20 scaled from the UEBA anomaly score (0-100) -- Day 47
   Final score is clamped to [0, 100].
 
 Routing tiers:
@@ -41,9 +42,33 @@ changes close this:
 The threshold (100MB) is deliberately conservative -- tune down if smaller
 transfers should also be flagged once real traffic volume is observed in
 production.
+
+Day 47 — UEBA anomaly-score boost
+----------------------------------
+tools/ueba_scorer.py (Day 47) compares the alert's user/entity against the
+behavioral profile ueba_engine.py (Day 46) builds nightly, and returns a
+transparent 0-100 anomaly_score across 5 named dimensions (login-hour
+deviation, source-IP novelty, command rarity, peer-group deviation, volume
+spike vs. the user's own baseline). That score is scaled into a 0-20pp
+boost here -- the same "additive, inspectable, no black-box" philosophy the
+rest of this file already uses.
+
+This boost is deliberately independent of, and can overlap with, the
+existing after-hours/new-IP/volume boosts above: those are static rule
+thresholds that apply the same way to every alert, while the UEBA boost is
+*relative to this specific user's own learned baseline* (e.g. an analyst
+who regularly logs in at 3am gets no after-hours-deviation boost here even
+though the static after-hours boost above still fires for them). Both are
+useful signals and are allowed to stack.
+
+If no UEBA profile exists yet for the entity (new user, or ueba_engine.py
+hasn't run), score_anomaly() returns anomaly_score=0 and this boost is
+simply 0 -- never a crash, never a penalty for lacking history.
 """
 
 from __future__ import annotations
+
+from tools.ueba_scorer import score_anomaly
 
 
 # ---------------------------------------------------------------------------
@@ -53,8 +78,15 @@ from __future__ import annotations
 # Day 39: single-event outbound transfer size (bytes) that earns a boost.
 LARGE_TRANSFER_BYTES_THRESHOLD = 100_000_000  # 100MB
 
+# Day 47: scales the 0-100 UEBA anomaly_score into a 0-20pp scorer boost.
+# 0.2 -> anomaly_score=100 contributes the full +20pp; anomaly_score=50
+# contributes +10pp. Tune this constant if UEBA signal should carry more
+# or less weight relative to the other boosts once real profile data
+# accumulates in production.
+UEBA_BOOST_SCALE = 0.2
 
-def score(alert: dict) -> int:
+
+def score(alert: dict, ueba_profile: dict | None = None) -> int:
     """
     Return confidence_pct (int 0-100) for a raw Wazuh alert dict.
 
@@ -64,6 +96,12 @@ def score(alert: dict) -> int:
         The ``_source`` field of a Wazuh alert document from Elasticsearch.
         Must already be CTI-enriched by pipeline_runner.enrich_with_cti()
         before this is called so that cti.matched is present.
+    ueba_profile : dict | None
+        [Day 47] Optional pre-fetched UEBA profile (from
+        tools.ueba_scorer.get_ueba_profile()). Pass this in if the caller
+        already resolved the profile elsewhere in the same cycle (e.g.
+        triage_agent.py) to avoid a second Elasticsearch round-trip. If
+        omitted, score_anomaly() resolves it itself from data.dstuser.
 
     Returns
     -------
@@ -113,7 +151,39 @@ def score(alert: dict) -> int:
         if bytes_out_int > LARGE_TRANSFER_BYTES_THRESHOLD:
             boost += 15
 
+    # -- UEBA anomaly-score boost (Day 47) ------------------------------------------
+    # Never allowed to crash scoring -- a UEBA lookup/query failure (missing
+    # profile, ES hiccup, etc.) degrades to anomaly_score=0 / boost=0,
+    # exactly like every other tool in this project degrades on failure
+    # rather than raising.
+    try:
+        ueba_result = score_anomaly(alert, profile=ueba_profile)
+        anomaly_score = ueba_result["anomaly_score"]
+        boost += int(anomaly_score * UEBA_BOOST_SCALE)
+    except Exception:
+        pass
+
     return max(0, min(100, base + boost))
+
+
+def score_verbose(alert: dict, ueba_profile: dict | None = None) -> dict:
+    """
+    [Day 47] Same as score(), but also returns the UEBA breakdown so
+    callers (pipeline_runner.py logging, analyst-facing tooling) can see
+    exactly which of the 5 UEBA dimensions fired, without recomputing the
+    anomaly score a second time. Never raises.
+    """
+    try:
+        ueba_result = score_anomaly(alert, profile=ueba_profile)
+    except Exception as e:
+        ueba_result = {"anomaly_score": 0, "breakdown": {}, "profile_used": False,
+                        "error": str(e)}
+    return {
+        "confidence_pct": score(alert, ueba_profile=ueba_profile),
+        "ueba_anomaly_score": ueba_result.get("anomaly_score", 0),
+        "ueba_breakdown": ueba_result.get("breakdown", {}),
+        "ueba_profile_used": ueba_result.get("profile_used", False),
+    }
 
 
 def tier(confidence_pct: int) -> str:
@@ -125,9 +195,9 @@ def tier(confidence_pct: int) -> str:
     return "TRIAGE"
 
 
-def score_and_tier(alert: dict) -> tuple[int, str]:
+def score_and_tier(alert: dict, ueba_profile: dict | None = None) -> tuple[int, str]:
     """Convenience wrapper -- returns (confidence_pct, tier_label)."""
-    pct = score(alert)
+    pct = score(alert, ueba_profile=ueba_profile)
     return pct, tier(pct)
 
 
@@ -213,6 +283,10 @@ if __name__ == "__main__":
     print("-" * 110)
     all_ok = True
     for desc, alert, expected in test_cases:
+        # No UEBA profile exists for any of these synthetic test users in a
+        # fresh environment, so score_anomaly() resolves anomaly_score=0
+        # and these cases are unaffected by the Day 47 boost -- confirms
+        # the new boost doesn't change pre-existing behaviour by default.
         pct, t = score_and_tier(alert)
         ok = "✅" if t == expected else "❌"
         if t != expected:
@@ -221,3 +295,29 @@ if __name__ == "__main__":
 
     print()
     print("All tests passed ✅" if all_ok else "Some tests FAILED ❌")
+
+    # -- Day 47: UEBA boost wiring check (explicit profile, no ES needed) ------
+    print()
+    print("=== Day 47 — UEBA boost wiring check (explicit profile, bypasses ES) ===")
+    elevated_profile = {
+        "typical_login_hours": [8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+        "typical_source_ips": ["198.51.100.10"],
+        "typical_commands": ["ls"],
+        "peer_group": "engineering",
+        "risk_score": 55,
+        "source_ip_coverage": "ok",
+        "volume_field_coverage": "ok",
+        "avg_outbound_bytes_per_day": 1_000_000,
+    }
+    ueba_test_alert = {
+        "rule": {"level": 5, "groups": ["pam", "authentication_success"]},
+        "data": {"srcip": "203.0.113.250", "dstuser": "devadmin", "login_hour": 3},
+    }
+    baseline_pct = score(ueba_test_alert)  # no profile -> anomaly boost = 0
+    boosted_pct  = score(ueba_test_alert, ueba_profile=elevated_profile)
+    detail       = score_verbose(ueba_test_alert, ueba_profile=elevated_profile)
+    print(f"  Without UEBA profile : {baseline_pct}%")
+    print(f"  With elevated profile: {boosted_pct}%  "
+          f"(ueba_anomaly_score={detail['ueba_anomaly_score']}/100)")
+    assert boosted_pct > baseline_pct, "expected the UEBA-boosted score to exceed the baseline"
+    print("  PASS — UEBA anomaly score is correctly increasing confidence_pct")
