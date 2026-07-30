@@ -1,0 +1,19 @@
+# Hunt 7 — Insider Threat: Data Staging
+#
+# NOTE: loaded by tools/insider_threat.py, not tools/hunt_loader.py — see
+# hunt_insider_credential_hoarding.yml for why.
+
+hunt_name: insider_data_staging
+hypothesis: >
+  A user downloaded far more data from internal systems in a short window
+  than their own established daily baseline — consistent with staging data
+  ahead of exfiltration, distinct from CTI-driven exfil detection (Hunt 2,
+  data_exfiltration_volume) because this compares against the *individual
+  user's own* UEBA baseline (Day 46/47), not a fixed volume threshold.
+mitre_technique: T1074
+escalate_if_found: true
+
+# staging_multiplier: current-window bytes must exceed staging_multiplier x
+# the user's own avg_outbound_bytes_per_day (from siem-ueba-profiles) to flag.
+staging_multiplier: 10
+lookback_hours: 24

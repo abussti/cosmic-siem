@@ -1,0 +1,20 @@
+# Hunt 8 — Insider Threat: Access Broadening
+#
+# NOTE: loaded by tools/insider_threat.py, not tools/hunt_loader.py — see
+# hunt_insider_credential_hoarding.yml for why.
+
+hunt_name: insider_access_broadening
+hypothesis: >
+  A user has started accessing systems they have no history of touching,
+  within a short window — consistent with an insider expanding their reach
+  ahead of a broader compromise or data-gathering effort, distinct from
+  Hunt 1 (lateral_movement_ssh) because this compares against the user's
+  own historical accessed_systems list (UEBA profile, Day 46), not a
+  same-source-IP-across-hosts pattern.
+mitre_technique: T1078
+escalate_if_found: true
+
+# new_systems_threshold: number of never-before-seen systems (agent.name)
+# accessed within lookback_days to flag.
+new_systems_threshold: 3
+lookback_days: 7

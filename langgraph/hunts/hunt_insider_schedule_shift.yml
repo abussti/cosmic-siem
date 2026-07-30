@@ -1,0 +1,25 @@
+# Hunt 9 — Insider Threat: Schedule Shift
+#
+# NOTE: loaded by tools/insider_threat.py, not tools/hunt_loader.py — see
+# hunt_insider_credential_hoarding.yml for why.
+#
+# Note on mitre_technique: MITRE ATT&CK has no dedicated "anomalous work
+# schedule" technique. T1078 (Valid Accounts) is reused here as the closest
+# fit — the account is valid and authorized, but its *usage pattern* is the
+# anomaly, same reasoning already applied to Hunt 8 above.
+
+hunt_name: insider_schedule_shift
+hypothesis: >
+  A user has been working several hours outside their own baseline hours
+  for multiple consecutive days — consistent with account misuse, a
+  compromised credential being used off-hours, or an insider working
+  outside normal oversight windows.
+mitre_technique: T1078
+escalate_if_found: true
+
+# shift_hours: minimum distance (hours) from the nearest typical login hour
+# for an entire day's logins to count as "shifted".
+shift_hours: 3
+# consecutive_days_threshold: number of consecutive shifted days required to flag.
+consecutive_days_threshold: 5
+lookback_days: 10

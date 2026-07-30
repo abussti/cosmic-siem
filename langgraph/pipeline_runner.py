@@ -5,9 +5,15 @@ Day 17 — Full pipeline runner.
 Day 23 — CTI enrichment added: every alert is IOC-matched before scoring.
 Day 26 — Proactive hunt scheduler added: runs hunt_pipeline from graph.py
          every 6 hours, completely independent of the alert poll loop below.
+Day 36 — Bug fix: CTI fields computed by enrich_with_cti() were never
+         passed to write_triage_result_to_es(), so cti.* was silently lost
+         after every pipeline run — only triage.* ever reached ES. Found
+         while building the SOC dashboard's "CTI Matches" panel, which
+         queried cti.matched and always returned 0 hits even after a
+         confirmed CTI match. Fixed at the write-back call site below.
 
 Wazuh → Elastic → CTI enrichment → confidence_scorer → coordination_agent
-       → triage_agent → ES write-back
+       → triage_agent → ES write-back (now includes cti.* — Day 36)
 
                               (in parallel, no alert needed)
                   APScheduler ──every 6h──> hunt_pipeline.invoke(...)
@@ -21,7 +27,8 @@ How it works
      b. Score it with confidence_scorer.score_and_tier()
      c. Build an AgentState and invoke the compiled LangGraph
      d. If the pipeline produced a triage_result, write it back to ES
-        via elastic_tools.write_triage_result_to_es()
+        via elastic_tools.write_triage_result_to_es() — including the
+        CTI fields computed in step (a) [Day 36 fix].
 3. Track the latest @timestamp seen so we never re-process the same alert.
 4. Print a structured trace for every alert so you can follow the full path.
 5. [Day 26] In the background, on a separate 6-hour timer that runs whether
@@ -78,6 +85,7 @@ from tools.elastic_tools import (
     write_triage_result_to_es,
 )
 from tools.ioc_matcher import match_alert_iocs   # ← Day 23
+from tools.insider_threat import run_all_insider_threat_hunts  # ← Day 49
 from state import AgentState
 
 
@@ -88,6 +96,13 @@ from state import AgentState
 POLL_INTERVAL: int = 30
 BATCH_SIZE: int = 20
 HUNT_INTERVAL_HOURS: int = 6   # Day 26 — scheduled hunt cadence
+INSIDER_HUNT_INTERVAL_HOURS: int = 24   # Day 49 — insider hunts look at daily/
+                                         # weekly/consecutive-day windows, so a
+                                         # 6h cadence would just re-flag the
+                                         # same in-progress week repeatedly;
+                                         # daily matches the detection windows
+                                         # (7d credential/access lookback, 24h
+                                         # staging window, 10d schedule window)
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +126,11 @@ def enrich_with_cti(alert: dict) -> dict:
 
     We normalise both to a single "worst case" result: if ANY indicator
     matched we mark the alert as matched and keep the highest-confidence hit.
+
+    NOTE (Day 36): these fields live only on this in-memory `alert` dict
+    during the pipeline run. They are NOT automatically persisted to ES —
+    run_pipeline_once() below must explicitly pass them into
+    write_triage_result_to_es() for them to survive past this function call.
     """
     _EMPTY = {"matched": False, "threat_actor": None, "campaign": None,
               "confidence": 0, "source": None}
@@ -255,6 +275,10 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
         for ev in evidence:
             trace_lines.append(f"  - {ev}")
 
+        # [Day 36 fix] Pass the CTI fields enrich_with_cti() computed above
+        # (step 1) through to the ES write-back — previously these were
+        # dropped here entirely, so cti.* never reached the persisted
+        # document even though it was correctly computed in memory.
         success = write_triage_result_to_es(
             es_index=es_index,
             es_id=es_id,
@@ -263,13 +287,27 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
             evidence=evidence,
             confidence_pct=final_pct,
             technique=final_technique,
+            cti_matched=source.get("cti.matched"),
+            cti_threat_actor=source.get("cti.threat_actor"),
+            cti_campaign=source.get("cti.campaign"),
+            cti_confidence=source.get("cti.confidence"),
+            cti_source=source.get("cti.source"),
         )
         status = "✅ written to ES" if success else "❌ ES write-back failed"
         _log(f"WRITE  {status}")
         trace_lines.append(f"- **ES write-back:** {status}")
+        if source.get("cti.matched"):
+            trace_lines.append(
+                f"- **CTI persisted:** actor=`{source.get('cti.threat_actor') or 'none'}` "
+                f"conf={source.get('cti.confidence')} source=`{source.get('cti.source') or 'n/a'}`"
+            )
     else:
         _log(f"WRITE  skipped (alert was archived or queued, no triage_result)")
         trace_lines.append(f"- **ES write-back:** skipped — alert routed to `{routing_tier}`")
+        # NOTE (Day 36, tracked as a follow-up, not fixed here): CTI fields
+        # are still never persisted for archived/review-tier alerts, since
+        # this branch never calls write_triage_result_to_es() at all. Only
+        # alerts that reach TRIAGE tier get cti.* written to ES.
 
     return final_state
 
@@ -319,6 +357,42 @@ def run_scheduled_hunts() -> None:
     _log("HUNT   scheduled hunt cycle complete")
 
 
+def run_scheduled_insider_hunts() -> None:
+    """
+    Day 49 — one scheduled insider-threat hunt cycle (Hunts 6-9: credential
+    hoarding, data staging, access broadening, schedule shift). Unlike
+    run_scheduled_hunts() above, this doesn't invoke hunt_pipeline at all —
+    tools.insider_threat.run_all_insider_threat_hunts() is self-contained:
+    it runs its own ES queries, writes its own siem-hunt-results docs, and
+    escalates any positive finding straight to coordination itself (pre-scored
+    at confidence_pct=90, tagged insider_threat) rather than returning
+    findings for this function to route. Never raises — a bad cycle is
+    logged and skipped, same convention as run_scheduled_hunts().
+    """
+    _log(f"{'═' * 70}")
+    _log("INSIDER  starting scheduled insider-threat hunt cycle…")
+
+    try:
+        results = run_all_insider_threat_hunts()
+    except Exception as exc:
+        _log(f"INSIDER  ❌ scheduled insider-threat hunt cycle raised: {exc}")
+        return
+
+    total_findings = 0
+    for r in results:
+        threats_found = r.get("threats_found", 0)
+        total_findings += threats_found
+        _log(f"INSIDER    {r['hunt_name']}: threats_found={threats_found}")
+        for f in r.get("findings", []):
+            _log(f"INSIDER      {f['username']}: {f['evidence']}")
+
+    if total_findings:
+        _log(f"INSIDER  ⚠️  {total_findings} insider-threat finding(s) this cycle — "
+             f"escalated directly to coordination (see siem-hunt-results / siem-response-log)")
+
+    _log("INSIDER  scheduled insider-threat hunt cycle complete")
+
+
 def start_hunt_scheduler() -> BackgroundScheduler:
     """
     Start the Day 26 proactive hunt scheduler in a background thread.
@@ -328,8 +402,14 @@ def start_hunt_scheduler() -> BackgroundScheduler:
     """
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_scheduled_hunts, "interval", hours=HUNT_INTERVAL_HOURS, id="hunt_scheduler")
+    # Day 49 — same scheduler instance, separate job + separate cadence.
+    # One BackgroundScheduler is enough (APScheduler handles multiple jobs
+    # with independent intervals natively) — no need for a third thread.
+    scheduler.add_job(run_scheduled_insider_hunts, "interval",
+                       hours=INSIDER_HUNT_INTERVAL_HOURS, id="insider_hunt_scheduler")
     scheduler.start()
-    _log(f"HUNT   scheduler started — running every {HUNT_INTERVAL_HOURS}h, independent of alert poll loop")
+    _log(f"HUNT   scheduler started — threat hunts every {HUNT_INTERVAL_HOURS}h, "
+         f"insider-threat hunts every {INSIDER_HUNT_INTERVAL_HOURS}h, both independent of alert poll loop")
     return scheduler
 
 
