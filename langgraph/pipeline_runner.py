@@ -11,9 +11,24 @@ Day 36 — Bug fix: CTI fields computed by enrich_with_cti() were never
          while building the SOC dashboard's "CTI Matches" panel, which
          queried cti.matched and always returned 0 hits even after a
          confirmed CTI match. Fixed at the write-back call site below.
+Day 51 — Multi-tenant data isolation: every alert now resolves a tenant_id
+         (resolve_tenant_id()) before scoring, and the triage write-back
+         path mirrors its result into that tenant's isolated index
+         (siem-{tenant_id}-alerts-*) via multi_tenant.tenant_manager, on
+         top of the existing shared logs-wazuh.alerts-* write. See the
+         "Day 51" comments below for exactly what is and isn't covered yet.
+Day 53 — Webhook alert forwarding: after the response agent finishes (i.e.
+         immediately after the tenant-scoped mirror write below), every
+         TRIAGE-tier alert is handed to tools.webhook_engine.send_notifications()
+         along with the same tenant's tenant_config, which forwards it to
+         whichever Slack/Teams/email/custom-webhook channels that tenant has
+         configured for the alert's severity. Best-effort only — a webhook
+         outage never blocks or fails the pipeline. See the "Day 53" comments
+         below.
 
 Wazuh → Elastic → CTI enrichment → confidence_scorer → coordination_agent
-       → triage_agent → ES write-back (now includes cti.* — Day 36)
+       → triage_agent → ES write-back (cti.* since Day 36; tenant-scoped
+         mirror write since Day 51) → webhook notifications (Day 53)
 
                               (in parallel, no alert needed)
                   APScheduler ──every 6h──> hunt_pipeline.invoke(...)
@@ -24,11 +39,15 @@ How it works
    (alerts where triage.verdict does not yet exist).
 2. For each new alert:
      a. [Day 23] Enrich with CTI data via match_alert_iocs()
-     b. Score it with confidence_scorer.score_and_tier()
-     c. Build an AgentState and invoke the compiled LangGraph
-     d. If the pipeline produced a triage_result, write it back to ES
+     b. [Day 51] Resolve which tenant this alert belongs to
+     c. Score it with confidence_scorer.score_and_tier()
+     d. Build an AgentState and invoke the compiled LangGraph
+     e. If the pipeline produced a triage_result, write it back to ES
         via elastic_tools.write_triage_result_to_es() — including the
-        CTI fields computed in step (a) [Day 36 fix].
+        CTI fields computed in step (a) [Day 36 fix] — and mirror the
+        same result into the resolved tenant's isolated index [Day 51].
+     f. [Day 53] Dispatch webhook notifications for the same alert, using
+        the resolved tenant's own notification_rules/channel_config.
 3. Track the latest @timestamp seen so we never re-process the same alert.
 4. Print a structured trace for every alert so you can follow the full path.
 5. [Day 26] In the background, on a separate 6-hour timer that runs whether
@@ -46,6 +65,9 @@ Usage
   # Start from a specific timestamp:
   python3 pipeline_runner.py --since "2026-06-02T00:00:00.000Z"
 
+  # [Day 51] Override the tenant a legacy/unmapped alert falls back to:
+  DEFAULT_TENANT_ID=tenant_beta python3 pipeline_runner.py --once
+
 Press Ctrl-C to stop the loop gracefully.
 """
 
@@ -53,6 +75,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -75,6 +98,24 @@ except ImportError:
     print("WARNING: could not import `hunt_pipeline` from graph.py — "
           "Day 26 scheduled hunts disabled for this run.")
     hunt_pipeline = None
+
+# ── Day 51 — multi-tenant isolation layer ───────────────────────────────────
+try:
+    from multi_tenant import tenant_manager as tenant_mgr
+except ImportError:
+    print("WARNING: could not import multi_tenant.tenant_manager — "
+          "Day 51 tenant-scoped writes disabled for this run (alerts will "
+          "still be processed and written to the shared logs-wazuh.alerts-* "
+          "index exactly as before).")
+    tenant_mgr = None
+
+# ── Day 53 — webhook alert forwarding ────────────────────────────────────────
+try:
+    from tools import webhook_engine
+except ImportError:
+    print("WARNING: could not import tools.webhook_engine — "
+          "Day 53 notification dispatch disabled for this run.")
+    webhook_engine = None
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -103,6 +144,50 @@ INSIDER_HUNT_INTERVAL_HOURS: int = 24   # Day 49 — insider hunts look at daily
                                          # daily matches the detection windows
                                          # (7d credential/access lookback, 24h
                                          # staging window, 10d schedule window)
+
+
+# ---------------------------------------------------------------------------
+# Day 51 — Tenant Resolution
+# ---------------------------------------------------------------------------
+
+DEFAULT_TENANT_ID = os.environ.get("DEFAULT_TENANT_ID", "tenant_alpha")
+
+# Curated placeholder mapping agent hostname -> tenant_id. Same "small seed
+# table, extend as real entities are observed" pattern already used for
+# _THREAT_ACTOR_SEED (Day 24) and _DEPARTMENT_SEED (Day 46). No real
+# per-client agent-onboarding/CMDB source exists yet in this stack, so this
+# is deliberately a placeholder, not a production multi-tenant ingestion
+# path — see the Day 51 Open Follow-Ups note near the bottom of this file.
+AGENT_TENANT_MAP: dict[str, str] = {
+    "agent1": "tenant_alpha",
+    "redteam-target-win10": "tenant_alpha",
+}
+
+
+def resolve_tenant_id(source: dict) -> str:
+    """
+    Resolve which tenant a raw alert belongs to, in priority order:
+      1. an explicit tenant_id already stamped on the alert (e.g. by a
+         tenant-aware Filebeat/ingestion pipeline, once one exists)
+      2. AGENT_TENANT_MAP lookup by agent.name
+      3. DEFAULT_TENANT_ID fallback (logged, so silent misrouting is
+         visible rather than hidden)
+
+    Never raises — always returns a non-empty string, since every
+    tenant-scoped write/query downstream (multi_tenant.tenant_manager)
+    hard-requires a tenant_id and will raise TenantIsolationError on None.
+    """
+    explicit = source.get("tenant_id")
+    if explicit:
+        return explicit
+
+    agent_name = source.get("agent", {}).get("name")
+    if agent_name in AGENT_TENANT_MAP:
+        return AGENT_TENANT_MAP[agent_name]
+
+    _log(f"TENANT ⚠️  no tenant_id/agent mapping found for agent={agent_name!r} "
+         f"— defaulting to DEFAULT_TENANT_ID={DEFAULT_TENANT_ID!r}")
+    return DEFAULT_TENANT_ID
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +249,58 @@ def enrich_with_cti(alert: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Day 53 — Webhook Notification Dispatch
+# ---------------------------------------------------------------------------
+
+def _dispatch_notifications(final_state: dict, tenant_id: str, trace_lines: list[str]) -> None:
+    """
+    Hand the finished alert to tools.webhook_engine.send_notifications(),
+    using the same tenant_id already resolved earlier in this cycle (Step 0
+    below) — no second resolution needed.
+
+    Called once per alert, right after the tenant-scoped mirror write
+    completes — i.e. right after the response agent's own decision/action
+    has already been logged to siem-response-log by the graph itself, so
+    a notification always reflects the final verdict/action, not an
+    in-progress one.
+
+    Best-effort only, matching the Day 51 tenant-mirror-write convention:
+    a webhook/SMTP outage is logged and swallowed, never raised, and never
+    allowed to affect pipeline control flow or block the next alert.
+    """
+    if webhook_engine is None:
+        _log("NOTIFY ⚠️  webhook_engine unavailable — skipping notification dispatch")
+        trace_lines.append("- **Notifications:** skipped — webhook_engine not importable")
+        return
+    if tenant_mgr is None:
+        _log("NOTIFY ⚠️  tenant_mgr unavailable — cannot look up tenant_config, skipping notifications")
+        trace_lines.append("- **Notifications:** skipped — tenant_mgr not importable")
+        return
+
+    try:
+        tenant_config = tenant_mgr.get_tenant_config(tenant_id)
+        if not tenant_config:
+            _log(f"NOTIFY ⚠️  no tenant_config found for tenant_id={tenant_id!r} — skipping notifications")
+            trace_lines.append(f"- **Notifications:** skipped — no tenant_config for `{tenant_id}`")
+            return
+
+        result = webhook_engine.send_notifications(final_state, tenant_config)
+        severity = result.get("severity")
+        fired = [c for c, r in result.get("results", {}).items() if r.get("success")]
+        failed = [c for c, r in result.get("results", {}).items() if not r.get("success")]
+
+        _log(f"NOTIFY severity={severity}  sent={fired or '[]'}  failed={failed or '[]'}")
+        trace_lines.append(
+            f"- **Notifications:** severity=`{severity}` sent=`{fired}` failed=`{failed}`"
+        )
+    except Exception as exc:
+        # Same discipline as the Day 51 tenant-mirror write above: a
+        # notification failure must never take down the alert pipeline.
+        _log(f"NOTIFY ❌ notification dispatch raised: {exc}")
+        trace_lines.append(f"- **Notifications:** ❌ dispatch error: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
 
@@ -206,6 +343,15 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
     trace_lines.append(f"- **User:** {dst_user}")
     trace_lines.append(f"- **ES id:** `{es_id}`")
     trace_lines.append(f"- **ES index:** `{es_index}`")
+
+    # ── Step 0 — [Day 51] resolve tenant context ─────────────────────────────
+    # Resolved once up front, before CTI/scoring, so it's available for both
+    # the trace output and the tenant-scoped mirror write in Step 6 below —
+    # and [Day 53] the notification dispatch in Step 7, which reuses this
+    # same tenant_id rather than resolving it a second time.
+    tenant_id = resolve_tenant_id(source)
+    _log(f"TENANT tenant_id={tenant_id}")
+    trace_lines.append(f"- **Tenant:** `{tenant_id}`")
 
     # ── Step 1 — CTI enrichment (Day 23) ─────────────────────────────────────
     _log("CTI    running IOC match…")
@@ -301,13 +447,77 @@ def run_pipeline_once(alert_hit: dict, trace_lines: list[str]) -> dict | None:
                 f"- **CTI persisted:** actor=`{source.get('cti.threat_actor') or 'none'}` "
                 f"conf={source.get('cti.confidence')} source=`{source.get('cti.source') or 'n/a'}`"
             )
+
+        # [Day 51] Mirror the same triage result into this tenant's isolated
+        # index (siem-{tenant_id}-alerts-*), on top of the existing shared
+        # write above. The shared logs-wazuh.alerts-* write is left exactly
+        # as-is so the Day 37 SOC dashboard keeps working unmodified; the
+        # tenant-scoped copy is what a per-tenant dashboard or any
+        # tenant_mgr.tenant_query() caller reads from going forward. This
+        # never blocks or fails the pipeline — a tenant-write error is
+        # logged, not raised, same "never break the main path over a
+        # secondary write" convention as every other tool in this project.
+        if tenant_mgr is not None:
+            try:
+                tenant_mgr.write_tenant_doc(tenant_id, "alerts", {
+                    "alert_es_id": es_id,
+                    "alert_es_index": es_index,
+                    "rule_id": rule_id,
+                    "rule_level": rule_level,
+                    "rule_description": rule_desc,
+                    "src_ip": src_ip,
+                    "dst_user": dst_user,
+                    "verdict": verdict,
+                    "summary": summary,
+                    "evidence": evidence,
+                    "confidence_pct": final_pct,
+                    "technique": final_technique,
+                    "escalate": escalate,
+                    "cti_matched": source.get("cti.matched"),
+                    "cti_threat_actor": source.get("cti.threat_actor"),
+                    "cti_confidence": source.get("cti.confidence"),
+                    "cti_source": source.get("cti.source"),
+                })
+                _log(f"TENANT ✅ tenant-scoped copy written to siem-{tenant_id}-alerts-*")
+                trace_lines.append(f"- **Tenant-scoped write:** ✅ siem-{tenant_id}-alerts-*")
+            except Exception as exc:
+                _log(f"TENANT ❌ tenant-scoped write failed: {exc}")
+                trace_lines.append(f"- **Tenant-scoped write:** ❌ {exc}")
+        else:
+            _log("TENANT ⚠️  tenant_mgr unavailable — skipping tenant-scoped mirror write")
+            trace_lines.append("- **Tenant-scoped write:** skipped — tenant_mgr not importable")
+
+        # ── Step 7 — [Day 53] dispatch webhook notifications ─────────────────
+        # Fires only for alerts that actually reached triage/response (same
+        # gating as the tenant-mirror write above) — an alert with no
+        # triage_result never had a response agent decision to notify
+        # anyone about in the first place. Uses the exact tenant_id already
+        # resolved in Step 0 and the fully-populated final_state (verdict,
+        # confidence_pct, technique, chain_result if a red-team/chain run
+        # attached one) so severity resolution has everything it needs.
+        _dispatch_notifications(final_state, tenant_id, trace_lines)
     else:
         _log(f"WRITE  skipped (alert was archived or queued, no triage_result)")
         trace_lines.append(f"- **ES write-back:** skipped — alert routed to `{routing_tier}`")
+        trace_lines.append("- **Notifications:** skipped — no triage_result (archived/review tier)")
         # NOTE (Day 36, tracked as a follow-up, not fixed here): CTI fields
         # are still never persisted for archived/review-tier alerts, since
         # this branch never calls write_triage_result_to_es() at all. Only
         # alerts that reach TRIAGE tier get cti.* written to ES.
+        #
+        # NOTE (Day 51, same class of gap): the tenant-scoped mirror write
+        # above only fires alongside a real triage write, for the same
+        # reason — archived/review-tier alerts currently have no ES
+        # write-back of any kind to piggyback on. If a per-tenant view of
+        # archived/review-queue alerts is ever needed, this branch would
+        # need its own explicit tenant_mgr.write_tenant_doc() call.
+        #
+        # NOTE (Day 53, same class of gap again): notifications are
+        # therefore also never sent for archived/review-tier alerts today —
+        # consistent with the Phase 3 plan (which only asked for
+        # response-agent-stage forwarding), but worth revisiting alongside
+        # the two notes above if a tenant ever wants "notify me on anything
+        # that even reaches review", not just TRIAGE-tier outcomes.
 
     return final_state
 
@@ -322,6 +532,21 @@ def run_scheduled_hunts() -> None:
     defined in graph.py) with an empty/neutral AgentState — there is no
     triggering alert, which is the whole point. Runs on its own APScheduler
     timer below; never called from the alert poll loop in main().
+
+    NOTE (Day 51, tracked as an open follow-up, not done here): this cycle
+    is not yet tenant-aware — it runs once, globally, rather than once per
+    active tenant. Making it tenant-scoped would mean iterating
+    tenant_mgr.list_tenants() and running (or at least writing) a hunt
+    cycle per tenant, which is a larger change than wiring in the write
+    path was — see Open Follow-Ups.
+
+    NOTE (Day 53, same class of gap): scheduled hunt escalations also don't
+    go through webhook_engine yet — only alerts that flow through
+    run_pipeline_once()'s normal per-alert path do. A hunt that escalates
+    still reaches coordination/triage as a synthetic alert (Day 29), so it
+    WILL trigger a notification once it's processed as a regular alert on
+    the next poll cycle — this note is only about the hunt cycle itself
+    never calling send_notifications() directly.
     """
     if hunt_pipeline is None:
         _log("HUNT   ⚠️  hunt_pipeline unavailable — skipping scheduled hunt cycle")
@@ -368,6 +593,14 @@ def run_scheduled_insider_hunts() -> None:
     at confidence_pct=90, tagged insider_threat) rather than returning
     findings for this function to route. Never raises — a bad cycle is
     logged and skipped, same convention as run_scheduled_hunts().
+
+    NOTE (Day 51): same open follow-up as run_scheduled_hunts() above —
+    not yet tenant-scoped.
+
+    NOTE (Day 53): same open follow-up as run_scheduled_hunts() above —
+    an insider-threat escalation reaches send_notifications() only once it
+    comes back around through the normal per-alert path, not directly from
+    this function.
     """
     _log(f"{'═' * 70}")
     _log("INSIDER  starting scheduled insider-threat hunt cycle…")
