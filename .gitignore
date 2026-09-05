@@ -25,3 +25,9 @@ venv/
 # IDE
 .vscode/
 .idea/
+
+node_modules/
+dist/
+build/
+*.log
+.env
